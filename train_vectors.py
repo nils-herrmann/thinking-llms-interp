@@ -10,10 +10,12 @@ from tqdm import tqdm
 import os
 from messages import labels
 import random
+import json
 
 # %%
-tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
-model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-R1-Distill-Llama-8B", torch_dtype=torch.bfloat16)
+model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"  # Can be changed to use different models
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 model = NNsight(model).to("cuda")
 
 model.generation_config.temperature=None
@@ -26,9 +28,12 @@ mean_vectors = defaultdict(lambda: {
 })
 
 save_every = 10
-save_path = "mean_vectors.pt"
+save_path = f"mean_vectors_{model_name.split('/')[-1].lower()}.pt"
 
 random.shuffle(messages)
+
+# Add this before the main loop
+responses_data = []
 
 for i, message in tqdm(enumerate(messages), total=len(messages), desc="Processing problems"):
     # Get model response
@@ -67,14 +72,28 @@ for i, message in tqdm(enumerate(messages), total=len(messages), desc="Processin
     1. deduction -> The model is performing a deduction step based on its current approach and assumptions.
     2. adding-knowledge -> The model is enriching the current approach with recalled facts.
     3. example-testing -> The model generates examples to test its current approach.
-    3. uncertainty-estimation -> The model is stating its own uncertainty.
-    4. backtracking -> The model decides to change its approach.
+    4. uncertainty-estimation -> The model is stating its own uncertainty.
+    5. backtracking -> The model decides to change its approach.
 
     The reasoning chain to analyze:
     {thinking_process}
 
     Answer only with the annotated text. Only use the labels outlined above. If there is a tail that has no annotation leave it out.
     """)
+
+    # Store the response data
+    responses_data.append({
+        "original_message": message,
+        "full_response": response,
+        "thinking_process": thinking_process,
+        "annotated_thinking": annotated_response
+    })
+
+    # Save responses to JSON file periodically
+    if i % save_every == 0:
+        with open(f"data/responses_{model_name.split('/')[-1].lower()}.json", "w") as f:
+            json.dump(responses_data, f, indent=2)
+        print(f"Saved responses data... ({len(responses_data)} entries)")
 
     # Parse annotations and find positions
     # Dictionary to store token positions for each label
@@ -144,10 +163,16 @@ for i, message in tqdm(enumerate(messages), total=len(messages), desc="Processin
         torch.save(save_dict, save_path)
         print(f"Current mean_vectors: {mean_vectors.keys()}. Saved...")
 
+# Save responses one final time after all processing
+with open(f"data/responses_{model_name.split('/')[-1].lower()}.json", "w") as f:
+    json.dump(responses_data, f, indent=2)
+print("Saved final responses data")
+
 # Save one final time after all processing
-save_path = "mean_vectors.pt"
+save_path = f"mean_vectors_{model_name.split('/')[-1].lower()}.pt"
 save_dict = {k: {'mean': v['mean'], 'count': v['count']} for k, v in mean_vectors.items()}
 torch.save(save_dict, save_path)
 print("Saved final mean vectors")
+
 
 # %%

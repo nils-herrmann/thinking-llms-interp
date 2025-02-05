@@ -13,73 +13,11 @@ import numpy as np
 from collections import defaultdict
 import gc
 import os
-
+import utils
 # %%
-def load_model_and_vectors():
-    # ... existing code from evaluate_vectors.py ...
-    tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
-    model = AutoModelForCausalLM.from_pretrained("deepseek-ai/DeepSeek-R1-Distill-Llama-8B", torch_dtype=torch.bfloat16)
-    model = NNsight(model).to("cuda")
-    
-    mean_vectors_dict = torch.load("mean_vectors.pt")
-    overall_mean = mean_vectors_dict['overall']['mean']
-    feature_vectors = {}
-    
-    for label in mean_vectors_dict:
-        if label != 'overall':
-            feature_vectors[label] = mean_vectors_dict[label]['mean'] - overall_mean
-            
+def load_model_and_vectors(model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-8B"):
+    model, tokenizer, feature_vectors = utils.load_model_and_vectors(compute_features=True, model_name=model_name)
     return model, tokenizer, feature_vectors
-
-def custom_generate_with_projection_removal(model, tokenizer, input_ids, max_new_tokens, label, feature_vectors, steer_positive=False):
-    generated_ids = input_ids.clone().cpu()
-    if label in feature_vectors:
-        # Move feature vectors to GPU only once, outside the loop
-        feature_vector = feature_vectors[label].to("cuda").to(torch.bfloat16)
-        normalized_features = feature_vector / torch.norm(feature_vector, dim=1, keepdim=True)
-    else:
-        normalized_features = None
-            
-    for k in range(max_new_tokens):
-        # Clear cache at start of each iteration
-        input_chunk = generated_ids.to("cuda")
-        
-        with torch.no_grad():  # Add this to reduce memory usage
-            with model.trace(input_chunk) as trace:
-                if normalized_features is not None:
-                    for layer_idx in range(model.config.num_hidden_layers):
-                        hidden_states = model.model.layers[layer_idx].output[0]
-                        # Compute projections more efficiently
-                        if steer_positive:
-                            if layer_idx in range(4,16):
-                                projection = torch.einsum('sh,h->s', hidden_states[0], normalized_features[layer_idx])
-                                projection_vector = projection[-1:].unsqueeze(-1) * normalized_features[layer_idx]  # Outer product
-                                model.model.layers[layer_idx].output[0][:, -1:] += 0.25 * projection_vector
-                        else:
-                            projection = torch.einsum('sh,h->s', hidden_states[0], normalized_features[layer_idx])
-                            projection_vector = projection[-1:].unsqueeze(-1) * normalized_features[layer_idx]  # Outer product
-                            model.model.layers[layer_idx].output[0][:, -1:] -= 0.25 * projection_vector
-
-                        del hidden_states
-                
-                outputs = model.lm_head.output.save()
-        
-        next_token = outputs[:, -1, :].argmax(dim=-1)
-        
-        if next_token.item() == tokenizer.eos_token_id:
-            break
-        
-        generated_ids = torch.cat([generated_ids, next_token.unsqueeze(0).cpu()], dim=1)
-
-        # Explicitly delete tensors
-        del trace, outputs, next_token, input_chunk
-       
-        torch.cuda.empty_cache()
-        if k % 10 == 0:
-            gc.collect()
-    
-    gc.collect()
-    return generated_ids.cpu()
 
 def get_label_counts(thinking_process, labels):
     # Get annotated version using chat function
@@ -91,8 +29,8 @@ def get_label_counts(thinking_process, labels):
     1. deduction -> The model is performing a deduction step based on its current approach and assumptions.
     2. adding-knowledge -> The model is enriching the current approach with recalled facts.
     3. example-testing -> The model generates examples to test its current approach.
-    3. uncertainty-estimation -> The model is stating its own uncertainty.
-    4. backtracking -> The model decides to change its approach.
+    4. uncertainty-estimation -> The model is stating its own uncertainty.
+    5. backtracking -> The model decides to change its approach.
 
     The reasoning chain to analyze:
     {thinking_process}
@@ -131,14 +69,15 @@ def generate_and_analyze(model, tokenizer, message, feature_vectors, label, labe
     input_ids = tokenizer.apply_chat_template([message], add_generation_prompt=True, return_tensors="pt").to("cuda")
     
     steer_positive = True if steer_mode == "positive" else False
-    output_ids = custom_generate_with_projection_removal(
+    output_ids = utils.custom_generate_with_projection_removal(
         model,
         tokenizer,
         input_ids,
         max_new_tokens=500,
         label=label if steer_mode != "none" else "none",
         feature_vectors=feature_vectors,
-        steer_positive=steer_positive
+        steer_positive=steer_positive,
+        show_progress=False
     )
     
     response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
@@ -160,9 +99,12 @@ def generate_and_analyze(model, tokenizer, message, feature_vectors, label, labe
         "annotated_response": annotated_response
     }
 
-def plot_label_statistics(results):
+def plot_label_statistics(results, model_name):
     # Create figures directory if it doesn't exist
     os.makedirs('figures', exist_ok=True)
+    
+    # Get model identifier for file naming
+    model_id = model_name.split('/')[-1].lower()
     
     fig, ax = plt.subplots(figsize=(10, 6))
     labels_list = list(results.keys())
@@ -196,7 +138,7 @@ def plot_label_statistics(results):
     ax.legend()
     
     plt.tight_layout()
-    plt.savefig('figures/steering_results.png', dpi=300)
+    plt.savefig(f'figures/steering_results_{model_id}.png', dpi=300)
     plt.show()
     plt.close()
 
@@ -208,7 +150,8 @@ random.seed(42)
 os.makedirs('data', exist_ok=True)
 
 # Load model and vectors
-model, tokenizer, feature_vectors = load_model_and_vectors()
+model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Can be changed to use different models
+model, tokenizer, feature_vectors = load_model_and_vectors(model_name)
 
 # %% Randomly sample evaluation examples
 eval_indices = random.sample(range(len(eval_messages)), n_examples)
@@ -231,10 +174,13 @@ for label in labels:
         results[label].append(example_results)
 
 # Save results
-with open('data/steering_evaluation_results.json', 'w') as f:
+model_id = model_name.split('/')[-1].lower()
+with open(f'data/steering_evaluation_results_{model_id}.json', 'w') as f:
     json.dump(results, f, indent=2)
 
 # %% Plot statistics
-plot_label_statistics(results)
+results = json.load(open(f'data/steering_evaluation_results_{model_id}.json'))
+del results['deduction']
+plot_label_statistics(results, model_name)
 
 # %%
