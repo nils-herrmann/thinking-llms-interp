@@ -72,7 +72,7 @@ output_ids = utils.custom_generate_with_projection_removal(
     max_new_tokens=500,
     label="none", 
     feature_vectors=feature_vectors,
-    show_progress=False
+    show_progress=True
 )
 response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 print(response)
@@ -85,11 +85,13 @@ output_ids = utils.custom_generate_with_projection_removal(
     tokenizer,
     input_ids,
     max_new_tokens=500,
-    label="backtracking",
+    label="example-testing",
     feature_vectors=feature_vectors,
     steer_positive=True,
-    show_progress=False
+    show_progress=True
 )
 response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 print(response)
 print("\n================\n")
+
+# %%

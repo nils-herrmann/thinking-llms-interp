@@ -9,7 +9,9 @@ import gc
 dotenv.load_dotenv(".env")
 
 def chat(prompt, image=None):
-    client = OpenAI()
+    client = OpenAI(
+        organization="org-E6iEJQGSfb0SNHMw6NFT1Cmi",
+    )
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[

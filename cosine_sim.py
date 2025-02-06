@@ -2,7 +2,8 @@
 import torch
 import matplotlib.pyplot as plt
 
-mean_vectors_dict = torch.load("mean_vectors.pt")
+model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
+mean_vectors_dict = torch.load(f"mean_vectors_{model_name.split('/')[-1].lower()}.pt")
 feature_vectors = {}
 
 overall_mean = mean_vectors_dict['overall']['mean']
@@ -56,5 +57,5 @@ def plot_cosine_similarity_heatmap(feature_vectors, model_id):
 
 
 # Plot the aggregated heatmap
-plot_cosine_similarity_heatmap(feature_vectors, model_id="DeepSeek-R1-Distill-Llama-8B")
+plot_cosine_similarity_heatmap(feature_vectors, model_id=model_name.split('/')[-1].lower())
 # %%
