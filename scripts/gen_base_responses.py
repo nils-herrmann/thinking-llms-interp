@@ -30,16 +30,19 @@ def generate_base_response(model, tokenizer, task_uuid, message, max_tokens):
 @click.command()
 @click.option(
     '--model-name',
+    "-m",
     default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
     help='Name of the model to use'
 )
 @click.option(
     '--output-dir',
+    "-o",
     default="data",
     help='Directory to save the responses'
 )
 @click.option(
     '--seed',
+    "-s",
     default=42,
     help='Random seed for reproducibility'
 )
