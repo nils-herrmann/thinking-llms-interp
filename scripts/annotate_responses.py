@@ -4,7 +4,7 @@ from tqdm import tqdm
 from deepseek_steering.utils import chat
 import os
 
-def get_annotated_response(thinking_process):
+def get_annotated_response(thinking_process, annotator_model_name, temperature):
     """Get annotated version of thinking process using chat function"""
     annotated_response = chat(f"""
     Please split the following reasoning chain of an LLM into annotated parts using labels and the following format ["label"]...["end-section"]. A sentence should be split into multiple parts if it incorporates multiple behaviours indicated by the labels.
@@ -21,7 +21,10 @@ def get_annotated_response(thinking_process):
     `{thinking_process}`
 
     Answer only with the annotated text. Only use the labels outlined above. If there is a tail that has no annotation leave it out.
-    """)
+    """,
+        model=annotator_model_name,
+        temperature=temperature
+    )
     
     return annotated_response
 
@@ -39,11 +42,23 @@ def extract_thinking_process(response_str):
 @click.command()
 @click.argument('input_path', type=click.Path(exists=True))
 @click.option(
+    '--annotator-model-name',
+    "-a",
+    default="gpt-4o",
+    help='Name of the model to use'
+)
+@click.option(
+    '--temperature',
+    "-t",
+    default=0.01,
+    help='Temperature for the annotator model'
+)
+@click.option(
     '--output-dir',
     default="data",
     help='Directory to save the annotated responses'
 )
-def main(input_path: str, output_dir: str):
+def main(input_path: str, output_dir: str, annotator_model_name: str, temperature: float):
     """Annotate responses in the input JSON file with reasoning labels."""
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -65,13 +80,12 @@ def main(input_path: str, output_dir: str):
         
         if thinking_process:
             # Get annotated version
-            annotated_response = get_annotated_response(thinking_process)
+            annotated_response = get_annotated_response(thinking_process, annotator_model_name, temperature)
             
             # Add to results
             annotated_responses.append({
                 "response_uuid": response["response_uuid"],
                 "task_uuid": response["task_uuid"],
-                "thinking_process": thinking_process,
                 "annotated_response": annotated_response
             })
         else:
@@ -81,11 +95,12 @@ def main(input_path: str, output_dir: str):
     output_data = {
         "model_name": data.get("model_name", "unknown"),
         "responses": annotated_responses,
-        "seed": data.get("seed", None)
+        "annotator_model_name": annotator_model_name,
+        "temperature": temperature
     }
     
     # Generate output filename
-    input_filename = os.path.basename(input_path)
+    input_filename = os.path.basename(input_path).replace("base_", "")
     output_filename = f"annotated_{input_filename}"
     output_path = os.path.join(output_dir, output_filename)
     

@@ -8,12 +8,16 @@ import gc
 
 dotenv.load_dotenv(".env")
 
-def chat(prompt, image=None):
+def chat(
+    prompt,
+    temperature=0.01,
+    model="gpt-4o"
+):
     client = OpenAI(
         organization="org-E6iEJQGSfb0SNHMw6NFT1Cmi",
     )
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model=model,
         messages=[
             {
                 "role": "user",
@@ -25,7 +29,7 @@ def chat(prompt, image=None):
                 ],
             }
         ],
-        temperature=0.01,
+        temperature=temperature,
     )
     return response.choices[0].message.content
 
