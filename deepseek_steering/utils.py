@@ -119,6 +119,7 @@ async def chat_batch(
     
     return results
 
+
 def chat_batch_sync(
     prompts: List[str],
     batch_size: int = 50,
