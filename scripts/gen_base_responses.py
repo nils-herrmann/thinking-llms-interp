@@ -1,12 +1,10 @@
 import json
 import os
 import uuid
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from nnsight import NNsight
-import torch
-from tqdm import tqdm
 import click
-from deepseek_steering.utils import chat
+import asyncio
+import logging
+from deepseek_steering.open_router_utils import ORBatchProcessor
 
 
 def save_responses(responses, output_path, model_name, max_tokens, temperature, n_gen, top_p):
@@ -33,82 +31,9 @@ def save_responses(responses, output_path, model_name, max_tokens, temperature, 
         json.dump(results, f, indent=2)
 
 
-def generate_base_response(model, tokenizer, task_uuid, message, max_tokens, temperature, top_p, n_gen):
-    """Generate a base response for a given message"""
-    input_ids = tokenizer.apply_chat_template([message], add_generation_prompt=True, return_tensors="pt").to("cuda")
-    
-    output_ids = model.generate(
-        input_ids,
-        max_new_tokens=max_tokens,
-        do_sample=True,
-        pad_token_id=tokenizer.eos_token_id,
-        temperature=temperature,
-        top_p=top_p,
-        num_return_sequences=n_gen,
-        use_cache=True
-    )
-    responses = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-    
-    return [{
-        "response_uuid": str(uuid.uuid4()),
-        "response_str": response,
-        "task_uuid": task_uuid
-    } for response in responses]
-
-
-def load_model_and_tokenizer(model_name: str):
-    """Load model and tokenizer from the specified model name.
-    
-    Args:
-        model_name (str): Name of the model to load
-        
-    Returns:
-        tuple: (model, tokenizer) loaded and configured for generation
-    """
-    print(f"Loading model: {model_name}")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
-    model = NNsight(model).to("cuda")
-    return model, tokenizer
-
-
-def generate_responses_locally(model, tokenizer, tasks, output_path, model_name, max_tokens, temperature, n_gen, save_every, top_p):
-    """Generate responses for all tasks with periodic saving.
-    
-    Args:
-        model: The loaded model
-        tokenizer: The loaded tokenizer
-        tasks: List of tasks to generate responses for
-        output_path: Path to save the responses
-        model_name: Name of the model used
-        max_tokens: Maximum tokens for generation
-        temperature: Temperature for generation
-        n_gen: Number of generations per task
-        save_every: Save checkpoint every N iterations
-    
-    Returns:
-        list: List of generated responses
-    """
-    responses = []
-    
-    for i, task in enumerate(tqdm(tasks, desc="Generating responses")):
-        response_data = generate_base_response(model, tokenizer, task["task_uuid"], task["prompt_message"], max_tokens, temperature, top_p, n_gen)
-        responses.append(response_data)
-        
-        # Save periodically
-        if (i + 1) % save_every == 0:
-            save_responses(responses, output_path, model_name, max_tokens, temperature, n_gen, top_p)
-            print(f"Saved {len(responses)} responses after iteration {i + 1}")
-            
-        # Free up memory
-        torch.cuda.empty_cache()
-    
-    return responses
-
-
-def generate_openai_base_response(model, task_uuid, task_content, max_tokens, temperature, top_p):
-    """Generate a base response for a given message"""
-    prompt = f"""
+def build_task_prompt(task_content: str) -> str:
+    """Build the prompt for a given task content"""
+    return f"""
     Please answer the following question:
     
     Question:
@@ -120,49 +45,59 @@ def generate_openai_base_response(model, task_uuid, task_content, max_tokens, te
     </think>
     [Your answer here]
     """
-    
-    response = chat(
-        prompt,
-        model=model,
+
+
+async def generate_openai_responses_async(
+    tasks, 
+    output_path: str, 
+    model_id: str,
+    max_tokens: int, 
+    temperature: float, 
+    n_gen: int, 
+    top_p: float,
+    max_retries: int = 3
+):
+    """Generate responses using OpenRouter batch processor"""
+    def process_response(or_response: str | tuple[str, str], task: dict) -> dict:
+        assert isinstance(or_response, tuple), f"ORBatchProcessor should return a tuple: (reasoning, response) for model {model_id}. Found {type(or_response)}"
+        
+        reasoning, response = or_response
+        if reasoning is not None:
+            response_str = f"<think>{reasoning}</think>{response}"
+        else:
+            response_str = f"<think>{response}</think>"
+
+        return {
+            "response_uuid": str(uuid.uuid4()),
+            "response_str": response_str,
+            "task_uuid": task["task_uuid"]
+        }
+
+    processor = ORBatchProcessor(
+        model_id=model_id,
         temperature=temperature,
-        max_tokens=max_tokens,
-        top_p=top_p
+        max_new_tokens=max_tokens,
+        rate_limiter=None,
+        max_retries=max_retries,
+        process_response=process_response,
     )
-    
-    return {
-        "response_uuid": str(uuid.uuid4()),
-        "response_str": response,
-        "task_uuid": task_uuid
-    }
 
-
-def generate_openai_responses(tasks, output_path, model_name, max_tokens, temperature, n_gen, save_every, top_p):
-    """Generate responses for all tasks with periodic saving.
-    
-    Args:
-        model: The loaded model
-        tokenizer: The loaded tokenizer
-        tasks: List of tasks to generate responses for
-        output_path: Path to save the responses
-        model_name: Name of the model used
-        max_tokens: Maximum tokens for generation
-        temperature: Temperature for generation
-        n_gen: Number of generations per task
-        save_every: Save checkpoint every N iterations
-    
-    Returns:
-        list: List of generated responses
-    """
-    
-    responses = []
-    for i, task in tqdm(enumerate(tasks), desc="Generating responses"):
+    # Prepare batch items
+    batch_items = []
+    for task in tasks:
         for _ in range(n_gen):
-            response_data = generate_openai_base_response(model_name, task["task_uuid"], task["prompt_message"]["content"], max_tokens, temperature, top_p)
-            responses.append(response_data)
+            prompt = build_task_prompt(task["prompt_message"]["content"])
+            batch_items.append((task, prompt))
 
-        if (i + 1) * n_gen % save_every == 0:
-            save_responses(responses, output_path, model_name, max_tokens, temperature, n_gen, top_p)
-            print(f"Saved {len(responses)} responses after iteration {i + 1}")
+    # Process batch
+    results = await processor.process_batch(batch_items)
+
+    responses = []
+    for (task, result) in results:
+        if result is not None:
+            responses.append(result)
+    
+    save_responses(responses, output_path, model_id, max_tokens, temperature, n_gen, top_p)
 
     return responses
 
@@ -171,8 +106,13 @@ def generate_openai_responses(tasks, output_path, model_name, max_tokens, temper
 @click.option(
     '--model-name',
     "-m",
-    default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
-    help='Name of the model to use'
+    default="deepseek/deepseek-r1-distill-llama-8b", 
+    help='Name of the model to use (needs to be in OpenRouter format)'
+)
+@click.option(
+    '--test', 
+    is_flag=True,
+    help='Run in test mode with reduced tasks and generations'
 )
 @click.option(
     '--output-dir',
@@ -201,12 +141,24 @@ def generate_openai_responses(tasks, output_path, model_name, max_tokens, temper
     help='Number of responses to generate per task'
 )
 @click.option(
-    '--save-every',
-    default=10,
-    help='Save responses every N iterations'
+    '--verbose',
+    "-v",
+    is_flag=True,
+    help='Verbose output'
 )
-def main(model_name: str, output_dir: str, max_tokens: int, temperature: float, n_gen: int, save_every: int, top_p: float):
-    """Generate base responses using the specified model and save them to a JSON file."""
+def main(
+    model_name: str, 
+    output_dir: str, 
+    max_tokens: int, 
+    temperature: float, 
+    n_gen: int, 
+    top_p: float,
+    test: bool,
+    verbose: bool
+):
+    """Generate base responses using OpenRouter batch processor"""
+    logging.basicConfig(level=logging.INFO if verbose else logging.WARNING)
+
     model_id = model_name.split('/')[-1].lower()
     
     # Create output directory if it doesn't exist
@@ -216,22 +168,22 @@ def main(model_name: str, output_dir: str, max_tokens: int, temperature: float, 
     with open('data/tasks.json', 'r') as f:
         tasks = json.load(f)
 
-    tasks = tasks[:3]
+    if test:
+        tasks = tasks[:3]
+        n_gen = 3
+        max_tokens = 2500
     
     # Generate responses
     output_path = os.path.join(output_dir, f'base_responses_{model_id}.json')
-    if model_id == "gpt-4o" or "openai" in model_name:
-        responses = generate_openai_responses(
-            tasks, output_path, model_id,
-            max_tokens, temperature, n_gen, save_every, top_p
-        )
-    else:
-        # Load model and tokenizer
-        model, tokenizer = load_model_and_tokenizer(model_name)
-        responses = generate_responses_locally(
-            model, tokenizer, tasks, output_path, model_name,
-            max_tokens, temperature, n_gen, save_every, top_p
-        )
+    responses = asyncio.run(generate_openai_responses_async(
+        tasks=tasks,
+        output_path=output_path,
+        model_id=model_name,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        n_gen=n_gen,
+        top_p=top_p,
+    ))
     
     # Save final results
     save_responses(responses, output_path, model_name, max_tokens, temperature, n_gen, top_p)
