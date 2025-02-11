@@ -67,7 +67,7 @@ def extract_thinking_process(response_str):
 @click.option(
     '--batch-size',
     "-b",
-    default=50,
+    default=300,
     help='Number of concurrent requests to process'
 )
 def main(input_path: str, output_dir: str, annotator_model_name: str, temperature: float, batch_size: int):
