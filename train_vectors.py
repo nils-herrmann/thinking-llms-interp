@@ -13,21 +13,15 @@ from tqdm import tqdm
 from deepseek_steering.messages import labels
 import random
 import json
-
+import os
 
 # %%
 def process_model_output(message, tokenizer, model):
     """Get model output and layer activations"""
     tokenized_messages = tokenizer.apply_chat_template([message], add_generation_prompt=True, return_tensors="pt").to("cuda")
-    output = model.generate(
-        tokenized_messages, 
-        max_new_tokens=500,
-        do_sample=False,
-        pad_token_id=tokenizer.eos_token_id
-    )
-    
+ 
     layer_outputs = []
-    with model.trace(output):
+    with model.trace(tokenized_messages):
         for layer_idx in range(model.config.num_hidden_layers):
             layer_outputs.append(model.model.layers[layer_idx].output[0].save())
     
@@ -135,25 +129,32 @@ mean_vectors = defaultdict(lambda: {
 # %%
 save_every = 10
 save_path = f"data/mean_vectors_{model_name.split('/')[-1].lower()}.pt"
-responses_json_path = f"data/annotated_responses_{model_name.split('/')[-1].lower()}.json"
+annotated_responses_json_path = f"data/annotated_responses_{model_name.split('/')[-1].lower()}.json"
+original_messages_json_path = f"data/base_responses_{model_name.split('/')[-1].lower()}.json"
 
-if not os.path.exists(responses_json_path):
-    raise FileNotFoundError(f"Responses file not found at {responses_json_path}")
+if not os.path.exists(annotated_responses_json_path):
+    raise FileNotFoundError(f"Annotated responses file not found at {annotated_responses_json_path}")
+if not os.path.exists(original_messages_json_path):
+    raise FileNotFoundError(f"Original messages file not found at {original_messages_json_path}")
 
-print(f"Loading existing responses from {responses_json_path}")
-with open(responses_json_path, 'r') as f:
-    responses_data = json.load(f)
-random.shuffle(responses_data)
+print(f"Loading existing annotated responses from {annotated_responses_json_path}")
+with open(annotated_responses_json_path, 'r') as f:
+    annotated_responses_data = json.load(f)
+random.shuffle(annotated_responses_data)
 
 # Calculate token frequencies for each label
-label_token_frequencies = calculate_next_token_frequencies(responses_data, tokenizer)
+label_token_frequencies = calculate_next_token_frequencies(annotated_responses_data, tokenizer)
 
 # Track how many times we've used each token for each label
 used_counts = defaultdict(lambda: defaultdict(int))
 
-for i, response_data in tqdm(enumerate(responses_data), total=len(responses_data), desc="Processing saved responses"):
+for i, response_data in tqdm(enumerate(annotated_responses_data), total=len(annotated_responses_data), desc="Processing saved responses"):
     output, layer_outputs = process_model_output(response_data["original_message"], tokenizer, model)
-    label_positions = get_label_positions(response_data["annotated_thinking"], output[0].tolist(), tokenizer)
+    ####
+    # FIND ORIGINAL AND ANNOTATED MESSAGE
+    # PUT THE ORIGINAL MESSAGE INTO process_model_output
+    ####
+    label_positions = get_label_positions(response_data["annotated_response"], output[0].tolist(), tokenizer)
     
     # Check frequencies and skip if needed
     should_process = False
