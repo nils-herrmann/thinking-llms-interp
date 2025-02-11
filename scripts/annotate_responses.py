@@ -1,32 +1,38 @@
 import json
 import click
-from tqdm import tqdm
-from deepseek_steering.utils import chat
+from deepseek_steering.utils import chat_batch_sync
 import os
+from typing import List
 
-def get_annotated_response(thinking_process, annotator_model_name, temperature):
-    """Get annotated version of thinking process using chat function"""
-    annotated_response = chat(f"""
-    Please split the following reasoning chain of an LLM into annotated parts using labels and the following format ["label"]...["end-section"]. A sentence should be split into multiple parts if it incorporates multiple behaviours indicated by the labels.
 
-    Available labels:
-    0. initializing -> The model is rephrasing the given task and states initial thoughts.
-    1. deduction -> The model is performing a deduction step based on its current approach and assumptions.
-    2. adding-knowledge -> The model is enriching the current approach with recalled facts.
-    3. example-testing -> The model generates examples to test its current approach.
-    4. uncertainty-estimation -> The model is stating its own uncertainty.
-    5. backtracking -> The model decides to change its approach.
+def get_annotated_responses_batch(thinking_processes: List[str], annotator_model_name: str, temperature: float, batch_size: int) -> List[str]:
+    """Get annotated versions of thinking processes in batch using chat function"""
+    prompts = [
+        f"""
+        Please split the following reasoning chain of an LLM into annotated parts using labels and the following format ["label"]...["end-section"]. A sentence should be split into multiple parts if it incorporates multiple behaviours indicated by the labels.
 
-    The reasoning chain to analyze:
-    `{thinking_process}`
+        Available labels:
+        0. initializing -> The model is rephrasing the given task and states initial thoughts.
+        1. deduction -> The model is performing a deduction step based on its current approach and assumptions.
+        2. adding-knowledge -> The model is enriching the current approach with recalled facts.
+        3. example-testing -> The model generates examples to test its current approach.
+        4. uncertainty-estimation -> The model is stating its own uncertainty.
+        5. backtracking -> The model decides to change its approach.
 
-    Answer only with the annotated text. Only use the labels outlined above. If there is a tail that has no annotation leave it out.
-    """,
+        The reasoning chain to analyze:
+        `{process}`
+
+        Answer only with the annotated text. Only use the labels outlined above. If there is a tail that has no annotation leave it out.
+        """
+        for process in thinking_processes
+    ]
+    
+    return chat_batch_sync(
+        prompts,
+        batch_size=batch_size,
         model=annotator_model_name,
         temperature=temperature
     )
-    
-    return annotated_response
 
 def extract_thinking_process(response_str):
     """Extract thinking process from response string"""
@@ -58,7 +64,13 @@ def extract_thinking_process(response_str):
     default="data",
     help='Directory to save the annotated responses'
 )
-def main(input_path: str, output_dir: str, annotator_model_name: str, temperature: float):
+@click.option(
+    '--batch-size',
+    "-b",
+    default=50,
+    help='Number of concurrent requests to process'
+)
+def main(input_path: str, output_dir: str, annotator_model_name: str, temperature: float, batch_size: int):
     """Annotate responses in the input JSON file with reasoning labels."""
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -72,24 +84,36 @@ def main(input_path: str, output_dir: str, annotator_model_name: str, temperatur
     if "responses" not in data:
         raise ValueError("Input JSON must contain a 'responses' field")
     
-    # Process each response
-    annotated_responses = []
-    for response in tqdm(data["responses"], desc="Annotating responses"):
-        # Extract thinking process
+    # Extract thinking processes
+    thinking_processes = []
+    valid_responses = []
+    
+    for response in data["responses"]:
         thinking_process = extract_thinking_process(response["response_str"])
-        
         if thinking_process:
-            # Get annotated version
-            annotated_response = get_annotated_response(thinking_process, annotator_model_name, temperature)
-            
-            # Add to results
-            annotated_responses.append({
-                "response_uuid": response["response_uuid"],
-                "task_uuid": response["task_uuid"],
-                "annotated_response": annotated_response
-            })
+            thinking_processes.append(thinking_process)
+            valid_responses.append(response)
         else:
             print(f"Warning: No thinking process found for response {response['response_uuid']}")
+    
+    # Process in batches
+    print(f"Processing {len(thinking_processes)} responses in batches of {batch_size}")
+    annotated_texts = get_annotated_responses_batch(
+        thinking_processes,
+        annotator_model_name,
+        temperature,
+        batch_size
+    )
+    
+    # Combine results
+    annotated_responses = [
+        {
+            "response_uuid": response["response_uuid"],
+            "task_uuid": response["task_uuid"],
+            "annotated_response": annotated_text
+        }
+        for response, annotated_text in zip(valid_responses, annotated_texts)
+    ]
     
     # Prepare output data
     output_data = {

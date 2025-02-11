@@ -5,6 +5,9 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from nnsight import NNsight
 from tqdm import tqdm
 import gc
+import asyncio
+from openai import AsyncOpenAI
+from typing import List
 
 dotenv.load_dotenv(".env")
 
@@ -36,6 +39,93 @@ def chat(
         top_p=top_p
     )
     return response.choices[0].message.content
+
+async def _process_chat_request(
+    client: AsyncOpenAI,
+    prompt: str,
+    temperature: float = 0.01,
+    model: str = "gpt-4o",
+    max_tokens: int = 5_000,
+    top_p: float = 0.90
+) -> str:
+    """Process a single chat request asynchronously"""
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt,
+                    },
+                ],
+            }
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p
+    )
+    return response.choices[0].message.content
+
+async def chat_batch(
+    prompts: List[str],
+    batch_size: int = 50,
+    temperature: float = 0.01,
+    model: str = "gpt-4o",
+    max_tokens: int = 5_000,
+    top_p: float = 0.90
+) -> List[str]:
+    """
+    Process multiple chat requests in batches asynchronously.
+    
+    Args:
+        prompts: List of prompts to process
+        batch_size: Number of concurrent requests
+        temperature: Temperature for generation
+        model: Model to use
+        max_tokens: Maximum tokens for generation
+        top_p: Top p for generation
+        
+    Returns:
+        List of responses in the same order as prompts
+    """
+    client = AsyncOpenAI(
+        organization="org-E6iEJQGSfb0SNHMw6NFT1Cmi",
+    )
+    
+    async def process_batch(batch_prompts: List[str]) -> List[str]:
+        tasks = [
+            _process_chat_request(
+                client=client,
+                prompt=prompt,
+                temperature=temperature,
+                model=model,
+                max_tokens=max_tokens,
+                top_p=top_p
+            )
+            for prompt in batch_prompts
+        ]
+        return await asyncio.gather(*tasks)
+
+    results = []
+    total_batches = (len(prompts) + batch_size - 1) // batch_size
+    with tqdm(total=total_batches, desc="Processing batches") as pbar:
+        for i in range(0, len(prompts), batch_size):
+            batch = prompts[i:i + batch_size]
+            batch_results = await process_batch(batch)
+            results.extend(batch_results)
+            pbar.update(1)
+    
+    return results
+
+def chat_batch_sync(
+    prompts: List[str],
+    batch_size: int = 50,
+    **kwargs
+) -> List[str]:
+    """Synchronous wrapper for chat_batch"""
+    return asyncio.run(chat_batch(prompts, batch_size, **kwargs))
 
 def load_model_and_vectors(compute_features=True, model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-8B"):
     """
