@@ -142,19 +142,27 @@ with open(annotated_responses_json_path, 'r') as f:
     annotated_responses_data = json.load(f)
 random.shuffle(annotated_responses_data)
 
+print(f"Loading existing original messages from {original_messages_json_path}")
+with open(original_messages_json_path, 'r') as f:
+    original_messages_data = json.load(f)
+random.shuffle(original_messages_data)
+
 # Calculate token frequencies for each label
 label_token_frequencies = calculate_next_token_frequencies(annotated_responses_data, tokenizer)
 
 # Track how many times we've used each token for each label
 used_counts = defaultdict(lambda: defaultdict(int))
 
-for i, response_data in tqdm(enumerate(annotated_responses_data), total=len(annotated_responses_data), desc="Processing saved responses"):
-    output, layer_outputs = process_model_output(response_data["original_message"], tokenizer, model)
+for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), total=len(annotated_responses_data), desc="Processing saved responses"):
+    response_uuid = annotated_response_data["response_uuid"]
+    base_response_data = next((msg for msg in original_messages_data if msg["response_uuid"] == response_uuid), None)
+
+    output, layer_outputs = process_model_output(base_response_data["original_message"], tokenizer, model)
     ####
     # FIND ORIGINAL AND ANNOTATED MESSAGE
     # PUT THE ORIGINAL MESSAGE INTO process_model_output
     ####
-    label_positions = get_label_positions(response_data["annotated_response"], output[0].tolist(), tokenizer)
+    label_positions = get_label_positions(annotated_response_data["annotated_response"], output[0].tolist(), tokenizer)
     
     # Check frequencies and skip if needed
     should_process = False
