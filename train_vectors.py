@@ -56,7 +56,6 @@ def process_model_output(prompt_and_model_response_input_ids, model):
 
 def get_label_positions(annotated_response: str, prompt_and_model_response_input_ids: list[int], tokenizer: AutoTokenizer):
     """Parse annotations and find token positions for each label"""
-    start_time = time.time()
     label_positions = {}
     pattern = r'\["([\w-]+)"\]([^\[]+)'
     matches = re.finditer(pattern, annotated_response)
@@ -84,9 +83,7 @@ def get_label_positions(annotated_response: str, prompt_and_model_response_input
                     token_end = j + len(text_tokens)
                     label_positions[label].append((token_start, token_end))
                 break
-    
-    elapsed = time.time() - start_time
-    print(f"get_label_positions took {elapsed:.2f} seconds")
+
     return label_positions
 
 def update_mean_vectors(mean_vectors, layer_outputs, label_positions, index):
@@ -235,16 +232,16 @@ for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), desc
     for label, positions in label_positions.items():
         for start, end in positions:
             # Get the first token of the labeled sequence
-            text = tokenizer.decode(prompt_and_model_response_input_ids[0][start:start+1])
-            if label_token_frequencies[label][text] > 50:
-                if not should_skip_example(label, text, used_counts):
+            first_token_str = tokenizer.decode(prompt_and_model_response_input_ids[0][start:start+1])
+            if label_token_frequencies[label][first_token_str] > 50:
+                if not should_skip_example(label, first_token_str, used_counts):
                     should_process = True
             else:
                 # Always process examples with frequency < 50
                 should_process = True
         
         if should_process:
-            used_counts[label][text] += 1
+            used_counts[label][first_token_str] += 1
 
     if should_process:
         # Get activations for each layer on this prompt and update mean vectors
