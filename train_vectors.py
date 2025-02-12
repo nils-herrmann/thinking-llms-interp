@@ -395,7 +395,6 @@ for i, (response_uuid, labels_positions) in tqdm(enumerate(response_positions_to
     if i % save_every == 0:
         save_dict = {k: {'mean': v['mean'], 'count': v['count']} for k, v in mean_vectors.items()}
         torch.save(save_dict, save_path)
-        print(f"\nCurrent mean_vectors: {mean_vectors.keys()}. Saved...")
         iter_elapsed = time.time() - iter_start_time
         print(f"Iteration {i} took {iter_elapsed:.2f} seconds")
     
