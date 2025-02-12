@@ -226,9 +226,6 @@ for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), desc
     prompt_message_input_ids = prompt_message_input_ids.cpu()
     base_response_input_ids = base_response_input_ids.cpu()
     prompt_and_model_response_input_ids = prompt_and_model_response_input_ids.cpu()
-    
-    # Get activations for each layer on this prompt
-    layer_outputs = process_model_output(prompt_and_model_response_input_ids, model)
 
     # Get the positions for each label in the combined tokenized prompt and model response
     label_positions = get_label_positions(annotated_response_data["annotated_response"], prompt_and_model_response_input_ids[0].tolist(), tokenizer)
@@ -250,6 +247,8 @@ for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), desc
             used_counts[label][text] += 1
 
     if should_process:
+        # Get activations for each layer on this prompt and update mean vectors
+        layer_outputs = process_model_output(prompt_and_model_response_input_ids, model)
         update_mean_vectors(mean_vectors, layer_outputs, label_positions, i)
         
         if i % save_every == 0:
