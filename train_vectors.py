@@ -183,8 +183,8 @@ label_token_frequencies = calculate_next_token_frequencies(annotated_responses_d
 used_counts: DefaultDict[str, DefaultDict[str, int]] = defaultdict(lambda: defaultdict(int))
 
 # Add constants
-MAX_EXAMPLES_PER_NEXT_TOKEN = 5
-MAX_EXAMPLES_PER_LABEL = 15  # -1 for using all next tokens
+MAX_EXAMPLES_PER_NEXT_TOKEN = 3
+MAX_EXAMPLES_PER_LABEL = 30  # -1 for using all next tokens
 
 # Add assertion
 assert MAX_EXAMPLES_PER_LABEL == -1 or MAX_EXAMPLES_PER_LABEL % MAX_EXAMPLES_PER_NEXT_TOKEN == 0, \
@@ -304,6 +304,8 @@ label_token_positions = collect_label_positions_by_token(
     original_messages_data=original_messages_data
 )
 
+# %%
+
 # Group examples by response_uuid to process them efficiently
 required_examples_by_label_and_token: DefaultDict[str, DefaultDict[str, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -331,13 +333,38 @@ for label in tqdm(label_token_positions, desc="Processing labels"):
         
         required_examples_by_label_and_token[label][token_str] += len(selected_examples)
 
-# Update the logging to show selected tokens
-print("\nSelected tokens by label:")
-for label in label_token_frequencies:
-    num_tokens_to_use = (MAX_EXAMPLES_PER_LABEL // MAX_EXAMPLES_PER_NEXT_TOKEN) if MAX_EXAMPLES_PER_LABEL != -1 else len(label_token_frequencies[label])
-    print(f"\n{label} (top {num_tokens_to_use} tokens):")
-    for token, freq in sorted(label_token_frequencies[label].items(), key=lambda x: x[1], reverse=True)[:num_tokens_to_use]:
-        print(f"  {token}: {required_examples_by_label_and_token[label][token]} out of {freq}")
+# %% Print label,token, and required count
+
+def print_selected_tokens(
+    required_examples_by_label_and_token: DefaultDict[str, DefaultDict[str, int]],
+    label_token_frequencies: DefaultDict[str, DefaultDict[str, int]]
+) -> None:
+    """Print selected tokens and their requirements for each label"""
+    print("\nSelected tokens by label:")
+    for label in sorted(required_examples_by_label_and_token.keys()):
+        token_requirements = required_examples_by_label_and_token[label]
+        if not token_requirements:
+            continue
+            
+        total_required = sum(token_requirements.values())
+        print(f"\n{label} (total required: {total_required}):")
+        
+        # Sort tokens by frequency
+        tokens_sorted = sorted(
+            token_requirements.items(),
+            key=lambda x: label_token_frequencies[label][x[0]],
+            reverse=True
+        )
+        
+        for token, required_count in tokens_sorted:
+            total_available = label_token_frequencies[label][token]
+            print(f"  {token!r}: need {required_count} (of {total_available} available)")
+
+# After calculating required_examples_by_label_and_token but before the processing loop
+print_selected_tokens(
+    required_examples_by_label_and_token=required_examples_by_label_and_token,
+    label_token_frequencies=label_token_frequencies
+)
 
 # %%
 
@@ -453,7 +480,9 @@ def count_missing_examples(
             total_missing += max(0, required_count - processed)
     return total_missing
 
-print("Processing responses...")
+# %%
+
+print("\nProcessing responses...")
 
 # Initialize progress bar
 total_missing = count_missing_examples(
@@ -477,7 +506,6 @@ while True:
         break
         
     response_uuid, labels_positions = result
-    iter_start_time = time.time()
     
     # Get model input
     model_input = prepare_model_input(
@@ -523,8 +551,7 @@ while True:
     if len(processed_response_uuids) % save_every == 0:
         save_dict = {k: {'mean': v['mean'], 'count': v['count']} for k, v in mean_vectors.items()}
         torch.save(save_dict, save_path)
-        iter_elapsed = time.time() - iter_start_time
-        print(f"\nProcessed {len(processed_response_uuids)} responses. Last iteration took {iter_elapsed:.2f} seconds")
+        print(f"\nSaved mean vectors for {len(processed_response_uuids)} responses.")
     
     # Clear memory
     del layer_outputs
