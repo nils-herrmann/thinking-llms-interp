@@ -12,6 +12,7 @@ import random
 import json
 import os
 import time  # Add this import at the top
+import gc
 
 # %% Load model
 
@@ -23,6 +24,8 @@ model = NNsight(model).to("cuda")
 model.generation_config.temperature=None
 model.generation_config.top_p=None
 
+model.eval()  # Ensure model is in eval mode
+torch.set_grad_enabled(False)  # Disable gradient computation
 
 mean_vectors = defaultdict(lambda: {
     'mean': torch.zeros(model.config.num_hidden_layers, model.config.hidden_size),
@@ -35,11 +38,18 @@ def process_model_output(prompt_and_model_response_input_ids, model):
     """Get model output and layer activations"""
     start_time = time.time()
     layer_outputs = []
+    
     with model.trace(prompt_and_model_response_input_ids):
         for layer_idx in range(model.config.num_hidden_layers):
             layer_outputs.append(model.model.layers[layer_idx].output[0].save())
     
+    # Stack tensors and move to CPU immediately
     layer_outputs = torch.cat([x.value.cpu().detach().to(torch.float32) for x in layer_outputs], dim=0)
+    
+    # Clear CUDA cache
+    torch.cuda.empty_cache()
+    gc.collect()
+    
     elapsed = time.time() - start_time
     print(f"process_model_output took {elapsed:.2f} seconds")
     return layer_outputs
@@ -192,7 +202,8 @@ label_token_frequencies = calculate_next_token_frequencies(annotated_responses_d
 # Track how many times we've used each token for each label
 used_counts = defaultdict(lambda: defaultdict(int))
 
-for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), total=len(annotated_responses_data), desc="Processing annotated responses"):
+
+for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), desc="Processing annotated responses"):
     iter_start_time = time.time()
     response_uuid = annotated_response_data["response_uuid"]
 
@@ -211,6 +222,11 @@ for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), tota
 
     prompt_and_model_response_input_ids = torch.cat([prompt_message_input_ids, base_response_input_ids], dim=1)
 
+    # Move tensors to CPU after use
+    prompt_message_input_ids = prompt_message_input_ids.cpu()
+    base_response_input_ids = base_response_input_ids.cpu()
+    prompt_and_model_response_input_ids = prompt_and_model_response_input_ids.cpu()
+    
     # Get activations for each layer on this prompt
     layer_outputs = process_model_output(prompt_and_model_response_input_ids, model)
 
@@ -229,9 +245,9 @@ for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), tota
             else:
                 # Always process examples with frequency < 50
                 should_process = True
-            
-            if should_process:
-                used_counts[label][text] += 1
+        
+        if should_process:
+            used_counts[label][text] += 1
 
     if should_process:
         update_mean_vectors(mean_vectors, layer_outputs, label_positions, i)
@@ -245,6 +261,11 @@ for i, annotated_response_data in tqdm(enumerate(annotated_responses_data), tota
                 print(f"{label}: {dict(used_counts[label])}")
             iter_elapsed = time.time() - iter_start_time
             print(f"Iteration {i} took {iter_elapsed:.2f} seconds")
+            # print(f"GPU Memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+            # print(f"GPU Memory cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+
+    # Clear memory at the end of each iteration
+    del layer_outputs
 
 # Save final results
 save_dict = {k: {'mean': v['mean'], 'count': v['count']} for k, v in mean_vectors.items()}
