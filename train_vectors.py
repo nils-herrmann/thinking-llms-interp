@@ -60,6 +60,8 @@ def get_label_positions(
     label_positions = {}
     pattern = r'\["([\w-]+)"\]([^\[]+)'
     matches = re.finditer(pattern, annotated_response)
+
+    last_match_index = 0
     
     for match in matches:
         labels = [label.strip() for label in match.group(1).strip('"').split(',')]
@@ -70,22 +72,33 @@ def get_label_positions(
             continue
 
         # Get the text between the label and the next label or end-section
-        text = match.group(2).strip()
+        annotated_resp_fragment = match.group(2).rstrip()
+        annotated_resp_fragment_stripped = annotated_resp_fragment.strip()
 
         # Encode the text and remove the BOS token
-        text_tokens: list[int] = tokenizer.encode(text)[1:]
+        annotated_resp_fragment_tokens: list[int] = tokenizer.encode(annotated_resp_fragment)[1:]
+        annotated_resp_fragment_stripped_tokens: list[int] = tokenizer.encode(annotated_resp_fragment_stripped)[1:]
         
         # Find the position of the text in the thinking tokens
         # Once found, we save the positions for each label
-        for j in range(len(prompt_and_model_response_input_ids) - len(text_tokens) + 1):
-            fragment = prompt_and_model_response_input_ids[j:j + len(text_tokens)]
-            if fragment == text_tokens:
+        for j in range(last_match_index, len(prompt_and_model_response_input_ids) - len(annotated_resp_fragment_tokens) + 1):
+            base_resp_fragment_tokens = prompt_and_model_response_input_ids[j:j + len(annotated_resp_fragment_tokens)]
+            # base_resp_fragment = tokenizer.decode(base_resp_fragment_tokens)
+
+            same_tokens = base_resp_fragment_tokens == annotated_resp_fragment_tokens or base_resp_fragment_tokens == annotated_resp_fragment_stripped_tokens
+
+            if not same_tokens:
+                #  check if either annotated_resp_fragment_tokens or annotated_resp_fragment_stripped_tokens is a prefix of when the last token is removed from all of them
+                same_tokens = (annotated_resp_fragment_tokens[:-1] == base_resp_fragment_tokens[:-1] or annotated_resp_fragment_stripped_tokens[:-1] == base_resp_fragment_tokens[:-1])
+
+            if same_tokens:
                 for label in labels:
                     if label not in label_positions:
                         label_positions[label] = []
                     token_start = j
-                    token_end = j + len(text_tokens)
+                    token_end = j + len(annotated_resp_fragment_tokens)
                     label_positions[label].append((token_start, token_end))
+                    last_match_index = j
                 break
 
     return label_positions
@@ -143,7 +156,7 @@ def calculate_next_token_frequencies(
             label = match.group(1)
             text = match.group(2).strip()
             # Get first token after label
-            tokens = tokenizer.encode(text)[1:2]  # Just get the first token
+            tokens = tokenizer.encode(text)[1:2]  # Just get the first token (element 0 is BOS)
             if tokens:
                 next_token_text = tokenizer.decode(tokens)
                 label_token_frequencies[label][next_token_text] += 1
@@ -283,7 +296,7 @@ def collect_label_positions_by_token(
     
     for annotated_response in tqdm(annotated_responses_data, desc="Collecting label positions"):
         response_uuid = annotated_response["response_uuid"]
-        
+
         # Get model input
         model_input = prepare_model_input(
             response_uuid=response_uuid,
@@ -345,6 +358,7 @@ for label in tqdm(label_token_positions, desc="Processing labels"):
                                   leave=False):
         # Randomly shuffle examples
         random.shuffle(examples)
+
         # Take up to MAX_EXAMPLES_PER_NEXT_TOKEN examples
         selected_examples = examples[:MAX_EXAMPLES_PER_NEXT_TOKEN]
         
