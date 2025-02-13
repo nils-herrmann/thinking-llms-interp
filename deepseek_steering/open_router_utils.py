@@ -13,7 +13,7 @@ from tqdm.asyncio import tqdm
 from deepseek_steering.batch_processor import BatchItem, BatchProcessor, BatchResult
 
 # Hard limit of maximum requests per minute to prevent excessive API usage
-MAX_OPEN_ROUTER_REQUESTS_LIMIT = 20
+MAX_OPEN_ROUTER_REQUESTS_LIMIT = 50
 
 MAX_REQUEST_TIMEOUT = 60 * 10  # 10 minutes
 
@@ -193,11 +193,7 @@ async def generate_or_response_async(
 
                 continue
 
-            if (
-                not response
-                or not response.choices
-                or not response.choices[0].message.content
-            ):
+            if (not response or not response.choices or len(response.choices) == 0):
                 logging.warning(f"No response or empty response from model {model_id}")
                 continue
 

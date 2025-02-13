@@ -78,8 +78,12 @@ async def generate_openai_responses_async(
         
         reasoning, response = or_response
         if reasoning is not None:
-            response_str = f"<think>{reasoning}</think>{response}"
+            response_str = f"<think>{reasoning}</think>"
+            # Sometimes we only get reasoning, no response
+            if response:
+                response_str += response
         else:
+            # We treat the response as the reasoning
             response_str = f"<think>{response}</think>"
 
         return {
