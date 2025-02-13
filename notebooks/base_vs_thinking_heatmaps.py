@@ -407,7 +407,7 @@ class RunningMeanStd:
 
 # %%
 
-responses_to_collect = 500
+responses_to_collect = 50
 
 all_response_uuids = [response["response_uuid"] for response in annotated_responses_data]
 
@@ -417,8 +417,9 @@ print(f"Collecting {responses_to_collect} responses from {len(all_response_uuids
 response_uuids_to_collect = random.sample(all_response_uuids, responses_to_collect)
 
 kl_stats_per_token = {}
-kl_stats_per_token_pair = {}  # New: tracks (token, next_token) pairs
-kl_stats_per_next_token = {}  # New: tracks stats for tokens based on being the "next" token
+kl_stats_per_token_pair = {}
+kl_stats_per_next_token = {}
+kl_stats_per_label = {}  # New: tracks stats per label
 
 for response_uuid in tqdm(response_uuids_to_collect):
     # Clear CUDA cache at the start of each iteration
@@ -470,6 +471,16 @@ for response_uuid in tqdm(response_uuids_to_collect):
         # Convert to float64 before passing to update
         kl_stats_per_next_token[next_token].update(current_kl.to(torch.float64).unsqueeze(0))
 
+    # Get labels for each token
+    token_labels = [model_input['token_to_label'].get(i) for i in range(len(thinking_tokens))]
+
+    # Update stats for labels
+    for label, kl_divergence_value in zip(token_labels, kl_divergence):
+        if label is not None:  # Only track tokens that have a label
+            if label not in kl_stats_per_label:
+                kl_stats_per_label[label] = RunningMeanStd()
+            kl_stats_per_label[label].update(kl_divergence_value.to(torch.float64).unsqueeze(0))
+
 # %% Save KL stats to disk
 
 # Create directory if it doesn't exist
@@ -482,7 +493,8 @@ model_id = deepseek_model_name.split('/')[-1].lower()
 stats_to_save = {
     "token": kl_stats_per_token,
     "token_pair": kl_stats_per_token_pair,
-    "next_token": kl_stats_per_next_token
+    "next_token": kl_stats_per_next_token,
+    "label": kl_stats_per_label  # Add label stats
 }
 
 for stats_type, stats_dict in stats_to_save.items():
@@ -546,5 +558,55 @@ plot_top_stats(kl_stats_per_token_pair, "Token Pairs", pair_keys=True, metric='s
 
 # plot_top_stats(kl_stats_per_next_token, "Next Tokens (Previous Token's KL)", metric='mean')
 # plot_top_stats(kl_stats_per_next_token, "Next Tokens (Previous Token's KL)", metric='sum')
+
+# %% Add visualization for label statistics
+
+def plot_label_stats(stats_dict, metric='mean'):
+    """Plot statistics for labels"""
+    values = []
+    for label, stats in stats_dict.items():
+        mean, var, count, sum_val = stats.compute()
+        value = sum_val.item() if metric == 'sum' else mean.item()
+        std_dev = torch.sqrt(var).item()
+        values.append((label, value, count, std_dev))
+    
+    # Sort by the chosen metric
+    values.sort(key=lambda x: x[1], reverse=True)
+    
+    # Create lists for plotting
+    labels = [t[0] for t in values]
+    metric_values = [t[1] for t in values]
+    counts = [t[2] for t in values]
+    std_devs = [t[3] for t in values]
+    
+    # Create the plot
+    plt.figure(figsize=(12, 6))
+    
+    # Plot bars with error bars
+    bars = plt.bar(range(len(labels)), metric_values, yerr=std_devs, capsize=5)
+    
+    # Add count annotations on top of each bar
+    for i, (bar, count) in enumerate(zip(bars, counts)):
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height,
+                f'n={int(count)}',
+                ha='center', va='bottom')
+    
+    plt.xticks(range(len(labels)), labels, rotation=45, ha='right')
+    plt.title(f'KL Divergence by Label ({metric.capitalize()})')
+    plt.xlabel('Label')
+    plt.ylabel(f'{metric.capitalize()} KL Divergence')
+    plt.tight_layout()
+    plt.show()
+    plt.savefig(f"../plots/kl_divergence_by_label_{metric}.png")
+    
+    # Print detailed statistics
+    print(f"\nLabel Statistics ({metric}):")
+    for label, value, count, std_dev in values:
+        print(f"{label:20} {value:.4f} ± {std_dev:.4f} (count: {count})")
+
+# Plot label statistics with both metrics
+plot_label_stats(kl_stats_per_label, metric='mean')
+plot_label_stats(kl_stats_per_label, metric='sum')
 
 # %%
