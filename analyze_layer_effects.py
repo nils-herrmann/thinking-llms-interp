@@ -81,6 +81,9 @@ def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, labe
             effect = torch.einsum('d,sd->s', -feature_activation[layer_idx], gradients).mean()
             
             patching_effects[layer_idx] += effect.cpu().item()
+
+        del activations, gradients, effect, feature_activation, layer_activations, layer_gradients
+        torch.cuda.empty_cache()
         
     patching_effects = [effect / len(label_positions) for effect in patching_effects]
 
@@ -278,46 +281,18 @@ def plot_fixed_vector_effects(fixed_vector_effects, model_name):
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
 model, tokenizer, mean_vectors_dict = utils.load_model_and_vectors(compute_features=False, model_name=model_name)
 
+max_length = 500
+
 # %%
-with open(f'data/responses_{model_name.split("/")[-1].lower()}.json', 'r') as f:
-    results = json.load(f)
+with open(f'data/base_responses_{model_name.split("/")[-1].lower()}.json', 'r') as f:
+    base_results = json.load(f)["responses"]
+
+with open(f'data/annotated_responses_{model_name.split("/")[-1].lower()}.json', 'r') as f:
+    annotated_results = json.load(f)["responses"]
 
 # %%
 labels = ['uncertainty-estimation','adding-knowledge', 'example-testing', 'backtracking']
 n_examples = 10 # Number of examples to analyze per label
-
-# Store results
-layer_effects = {label: [] for label in labels}
-
-# Analyze each label
-for label in labels:
-    print(f"Analyzing label: {label}")
-    for example in tqdm(results[:n_examples]):
-        original_text = example['thinking_process']
-        annotated_text = example['annotated_thinking']
-
-        
-        # Find token positions of labeled sentences
-        label_positions = find_label_positions(annotated_text, original_text, tokenizer, label)
-
-        if label_positions:  # Only process if we found labeled sentences
-            effects = analyze_layer_effects(
-                model,
-                tokenizer,
-                original_text,
-                label,
-                mean_vectors_dict,
-                label_positions
-            )
-
-            if effects:
-                layer_effects[label].append(effects)
-
-json.dump(layer_effects, open(f'data/layer_effects_{model_name.split("/")[-1].lower()}.json', 'w'))
-
-# %% Plot results
-layer_effects = json.load(open(f'data/layer_effects_{model_name.split("/")[-1].lower()}.json', 'r'))
-plot_layer_effects(layer_effects, model_name)
 
 # %%
 fixed_vector_effects = {label: {} for label in labels}
@@ -330,12 +305,15 @@ for label in labels:
         print(f"Using steering vector from layer {fixed_layer_idx}")
         layer_total_effects = []
         
-        for example in tqdm(results[:n_examples]):
-            original_text = example['thinking_process']
-            annotated_text = example['annotated_thinking']
+        for annotated_example in tqdm(annotated_results[:n_examples]):
+            annotated_text = annotated_example['annotated_response']
+            
+            example = next((x for x in base_results if x['response_uuid'] == annotated_example['response_uuid']), None)
+            original_text = example['response_str']
             
             label_positions = find_label_positions(annotated_text, original_text, tokenizer, label)
-            
+            label_positions = [x for x in label_positions if x[1] < max_length]
+
             if label_positions:
                 effects = analyze_layer_effects_fixed_vector(
                     model,
@@ -357,4 +335,41 @@ json.dump(fixed_vector_effects, open(f'data/fixed_vector_effects_{model_name.spl
 
 # Plot the results
 plot_fixed_vector_effects(fixed_vector_effects, model_name)
+
+# %%
+# Store results
+layer_effects = {label: [] for label in labels}
+
+# Analyze each label
+for label in labels:
+    print(f"Analyzing label: {label}")
+    for annotated_example in tqdm(annotated_results[:n_examples]):
+        annotated_text = annotated_example['annotated_response']
+        
+        # Find matching annotated response using UUID
+        example = next((x for x in base_results if x['response_uuid'] == annotated_example['response_uuid']), None)
+        original_text = example['response_str']
+
+        # Find token positions of labeled sentences
+        label_positions = find_label_positions(annotated_text, original_text, tokenizer, label)
+        label_positions = [x for x in label_positions if x[1] < max_length]
+
+        if label_positions:  # Only process if we found labeled sentences
+            effects = analyze_layer_effects(
+                model,
+                tokenizer,
+                original_text,
+                label,
+                mean_vectors_dict,
+                label_positions
+            )
+
+            if effects:
+                layer_effects[label].append(effects)
+
+json.dump(layer_effects, open(f'data/layer_effects_{model_name.split("/")[-1].lower()}.json', 'w'))
+
+# %% Plot results
+layer_effects = json.load(open(f'data/layer_effects_{model_name.split("/")[-1].lower()}.json', 'r'))
+plot_layer_effects(layer_effects, model_name)
 # %%

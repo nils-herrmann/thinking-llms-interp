@@ -1,8 +1,8 @@
 # %%
-from utils import chat
+from deepseek_steering.utils import chat
 import json
 import random
-from messages import messages
+from deepseek_steering.messages import messages
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -29,33 +29,39 @@ def get_label_counts(thinking_process, tokenizer, labels, annotate_response=True
         {thinking_process}
 
         Answer only with the annotated text. Only use the labels outlined above. If there is a tail that has no annotation leave it out.
-        """)
+        Ensure that the annotated sentences are exactly the same as before, including linebreaks and spacing.
+        """,
+        max_tokens=1000
+        )
     else:
         annotated_response = thinking_process
     
-    # Initialize token counts for each label
-    label_token_counts = {label: 0 for label in labels}
+    # Initialize sentence counts for each label
+    label_sentence_counts = {label: 0 for label in labels}
     
     # Find all annotated sections
     pattern = r'\["([\w-]+)"\]([^\[]+)'
     matches = re.finditer(pattern, annotated_response)
     
-    # Get tokens for the entire thinking process
-    total_tokens = len(tokenizer.encode(thinking_process))
+    # Count total annotated sentences
+    total_sentences = 0
     
-    # Count tokens for each label
+    # Count sentences for each label
     for match in matches:
         label = match.group(1)
         text = match.group(2).strip()
         if label != "end-section" and label in labels:
-            # Count tokens in this section
-            token_count = len(tokenizer.encode(text)) - 1  # Subtract 1 to account for potential BOS token
-            label_token_counts[label] += token_count
+            # Count sentences in this section (split by periods followed by space or newline)
+            sentences = len(re.split(r'[.!?]+[\s\n]+', text.strip()))
+            if sentences == 0:  # Handle case where there's just one sentence without ending punctuation
+                sentences = 1
+            label_sentence_counts[label] += sentences
+            total_sentences += sentences
     
     # Convert to fractions
     label_fractions = {
-        label: count / total_tokens if total_tokens > 0 else 0 
-        for label, count in label_token_counts.items()
+        label: count / total_sentences if total_sentences > 0 else 0 
+        for label, count in label_sentence_counts.items()
     }
             
     return label_fractions, annotated_response
@@ -86,8 +92,7 @@ def process_chat_response(message, tokenizer, labels):
     label_fractions, annotated_response = get_label_counts(thinking_process, tokenizer, labels)
     
     return {
-        "response": response,
-        "thinking_process": thinking_process,
+        "annotated_response": thinking_process,
         "label_fractions": label_fractions,
         "annotated_response": annotated_response
     }
@@ -132,7 +137,7 @@ def plot_comparison(chat_results, deepseek_results, labels, model_name):
     # Set y-axis limit with more headroom and add label
     ymax = max(max(chat_means), max(deepseek_means))
     ax.set_ylim(0, ymax * 1.15)  # Add 15% headroom
-    ax.set_ylabel('Token Fraction', fontsize=16)  # Add y-axis label
+    ax.set_ylabel('Sentence Fraction', fontsize=16)  # Updated y-axis label
     
     # Convert y-axis to percentage
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0f}%'.format(y * 100)))
@@ -171,11 +176,11 @@ def plot_comparison(chat_results, deepseek_results, labels, model_name):
     plt.close()
 
 # %% Parameters
-n_examples = 100
+n_examples = 10
 random.seed(42)
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
 model_id = model_name.split('/')[-1].lower()
-compute_from_json = True  # Add this flag
+compute_from_json = False
 
 labels = ['initializing', 'deduction', 'adding-knowledge', 'example-testing', 
           'uncertainty-estimation', 'backtracking']
@@ -201,8 +206,7 @@ if compute_from_json:
             annotate_response=False
         )
         chat_results.append({
-            "response": result["response"],
-            "thinking_process": result["thinking_process"],
+            "annotated_response": result["annotated_response"],
             "label_fractions": label_fractions,
             "annotated_response": annotated_response
         })
@@ -217,20 +221,23 @@ if compute_from_json:
             annotate_response=False
         )
         deepseek_results.append({
-            "response": result["response"],
-            "thinking_process": result["thinking_process"],
+            "annotated_response": result["annotated_response"],
             "label_fractions": label_fractions,
             "annotated_response": annotated_response
         })
 else:
     # Load existing DeepSeek responses
-    with open(f'data/responses_{model_id}.json', 'r') as f:
-        deepseek_data = json.load(f)
+    with open(f'data/annotated_responses_{model_id}.json', 'r') as f:
+        annotated_data = random.sample(json.load(f)["responses"], n_examples)
 
-    # Randomly sample evaluation examples
-    eval_indices = random.sample(range(len(messages)), n_examples)
-    selected_messages = [messages[i] for i in eval_indices]
-    selected_deepseek_responses = [deepseek_data[i] for i in eval_indices]
+    with open(f'data/base_responses_{model_id}.json', 'r') as f:
+        base_results = json.load(f)["responses"]
+
+    selected_messages = []
+    for annotated_example in annotated_data:
+        original_example = next((x for x in base_results if x['response_uuid'] == annotated_example['response_uuid']), None)
+        original_text = original_example['response_str']
+        selected_messages.append(original_text)
 
     # Process chat responses
     chat_results = []
@@ -242,11 +249,10 @@ else:
         chat_results.append(chat_result)
         
         # Process existing DeepSeek response
-        thinking_process = deepseek_response["thinking_process"]
+        thinking_process = deepseek_response["annotated_response"]
         label_fractions, annotated_response = get_label_counts(thinking_process, tokenizer, labels)
         deepseek_results.append({
-            "response": deepseek_response["full_response"],
-            "thinking_process": thinking_process,
+            "annotated_response": deepseek_response["annotated_response"],
             "label_fractions": label_fractions,
             "annotated_response": annotated_response
         })
@@ -267,5 +273,3 @@ deepseek_results = results["deepseek_results"]
 
 # %%
 plot_comparison(chat_results, deepseek_results, labels, model_name)
-
-# %% 

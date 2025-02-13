@@ -23,24 +23,24 @@ def load_model_and_vectors(model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 
 
 def generate_and_analyze(model, tokenizer, message, feature_vectors, label, layer_effects, steer_mode="none"):
-    input_ids = tokenizer.apply_chat_template([message], add_generation_prompt=True, return_tensors="pt").to("cuda")
+    input_ids = tokenizer.apply_chat_template([message], add_generation_prompt=True, return_text=True)
     
     steer_positive = True if steer_mode == "positive" else False
 
-    layers = []
-    effects = torch.stack([torch.tensor(x) for x in layer_effects[label]], dim=0).mean(0)
+    layers = [9,10,11,12]
+    #effects = torch.stack([torch.tensor(x) for x in layer_effects[label]], dim=0).mean(0)
 
-    positive_indices = [i for i, effect in enumerate(effects) if effect > 0]
+    #positive_indices = [i for i, effect in enumerate(effects) if effect > 0]
     # Sort indices by effect size and select layers until sum reaches threshold
-    sorted_indices = sorted(positive_indices, key=lambda i: effects[i], reverse=True)
+    #sorted_indices = sorted(positive_indices, key=lambda i: effects[i], reverse=True)
     selected_effects_sum = 0
-    target_sum = 0.02
+    #target_sum = 0.02
     
-    for idx in sorted_indices:
-        layers.append(idx)
-        selected_effects_sum += effects[idx]
-        if selected_effects_sum >= target_sum:
-            break
+    #for idx in sorted_indices:
+    #    layers.append(idx)
+    #    selected_effects_sum += effects[idx]
+    #    if selected_effects_sum >= target_sum:
+    #        break
     
     print(f"Selected effects sum: {selected_effects_sum}")
     print("Layers: ", layers)
@@ -148,11 +148,10 @@ random.seed(42)
 os.makedirs('data', exist_ok=True)
 
 # Load model and vectors
-model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Can be changed to use different models
+model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"  # Can be changed to use different models
 model_id = model_name.split('/')[-1].lower()
 
 layer_effects = json.load(open(f'data/layer_effects_{model_name.split("/")[-1].lower()}.json', 'r'))
-
 
 # %%
 model, tokenizer, feature_vectors = load_model_and_vectors(model_name)
@@ -208,7 +207,7 @@ for label in labels:
 # %% Process all chat requests in parallel
 all_annotated_responses = []
 for i in tqdm(range(len(all_chat_requests)), desc="Processing chat requests"):
-    all_annotated_responses.append(chat(all_chat_requests[i]))
+    all_annotated_responses.append(chat(all_chat_requests[i], max_tokens=1000))
 
 # %% Third phase: Process responses and organize results
 results = {label: [] for label in labels}
@@ -217,32 +216,43 @@ current_label = None
 current_example = None
 temp_results = {}
 
-for (label, idx, mode), annotated_response in zip(request_mapping, all_annotated_responses):
-    thinking_process = all_generations[label][idx][mode]
-    
-    # Initialize token counts for each label
-    label_token_counts = {l: 0 for l in labels}
+def get_label_counts(thinking_process, labels):
+    # Initialize sentence counts for each label
+    label_sentence_counts = {label: 0 for label in labels}
     
     # Find all annotated sections
     pattern = r'\["([\w-]+)"\]([^\[]+)'
-    matches = re.finditer(pattern, annotated_response)
+    matches = re.finditer(pattern, thinking_process)
     
-    # Get tokens for the entire thinking process
-    total_tokens = len(tokenizer.encode(thinking_process))
+    # Count total annotated sentences
+    total_sentences = 0
     
-    # Count tokens for each label
+    # Count sentences for each label
     for match in matches:
-        match_label = match.group(1)
+        label = match.group(1)
         text = match.group(2).strip()
-        if match_label != "end-section" and match_label in labels:
-            token_count = len(tokenizer.encode(text)) - 1
-            label_token_counts[match_label] += token_count
+        if label != "end-section" and label in labels:
+            # Count sentences in this section (split by periods followed by space or newline)
+            sentences = len(re.split(r'[.!?]+[\s\n]+', text.strip()))
+            if sentences == 0:  # Handle case where there's just one sentence without ending punctuation
+                sentences = 1
+            label_sentence_counts[label] += sentences
+            total_sentences += sentences
     
     # Convert to fractions
     label_fractions = {
-        l: count / total_tokens if total_tokens > 0 else 0 
-        for l, count in label_token_counts.items()
+        label: count / total_sentences if total_sentences > 0 else 0 
+        for label, count in label_sentence_counts.items()
     }
+            
+    return label_fractions
+
+# %%
+for (label, idx, mode), annotated_response in zip(request_mapping, all_annotated_responses):
+    thinking_process = all_generations[label][idx][mode]
+    
+    # Get label fractions using sentence counting
+    label_fractions = get_label_counts(annotated_response, labels)
     
     # Store results
     if current_label != label or current_example != idx:

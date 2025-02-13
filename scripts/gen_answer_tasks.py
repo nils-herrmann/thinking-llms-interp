@@ -47,7 +47,7 @@ def main():
     tasks = generate_tasks()
     
     # Save to JSON file
-    output_path = os.path.join("data", "answer_tasks.json")
+    output_path = os.path.join("data", "data/answer_tasks.json")
     with open(output_path, 'w') as f:
         json.dump(tasks, f, indent=2)
     
