@@ -11,6 +11,7 @@ from typing import List, Dict, Any
 from tiny_dashboard.visualization_utils import activation_visualization
 from IPython.display import HTML, display
 import pickle
+import numpy as np
 
 # %% Set model names
 deepseek_model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
@@ -632,5 +633,77 @@ def plot_label_stats(stats_dict, metric='mean'):
 # Plot label statistics with both metrics
 plot_label_stats(kl_stats_per_label, metric='mean')
 plot_label_stats(kl_stats_per_label, metric='sum')
+
+# %% Add stacked bar plot for token pairs by label
+
+def plot_stacked_token_pairs_by_label(stats_dict, n=20):
+    """
+    Create a stacked bar plot showing token pairs with different colors for each label
+    """
+    # First, organize data by token pairs
+    pair_data = {}
+    for (current_token, next_token, label), stats in stats_dict.items():
+        pair_key = (current_token, next_token)
+        if pair_key not in pair_data:
+            pair_data[pair_key] = {}
+        _, _, _, sum_val = stats.compute()
+        pair_data[pair_key][label] = sum_val.item()
+    
+    # Calculate total sum for each pair and sort
+    pair_sums = {pair: sum(label_sums.values()) for pair, label_sums in pair_data.items()}
+    top_pairs = sorted(pair_sums.items(), key=lambda x: x[1], reverse=True)[:n]
+    
+    # Prepare data for plotting - modify this line to format tokens more clearly
+    pairs = []
+    for p, _ in top_pairs:
+        current_token = p[0].replace('\n', '\\n')  # Escape newlines in tokens
+        next_token = p[1].replace('\n', '\\n')
+        pairs.append(f"{current_token}\n{next_token}")
+    
+    # Create data arrays for each label
+    label_data = {label: [] for label in set(label for pair_dict in pair_data.values() for label in pair_dict.keys())}
+    for pair, _ in top_pairs:
+        pair_dict = pair_data[pair]
+        for label in label_data:
+            label_data[label].append(pair_dict.get(label, 0))
+    
+    # Create the stacked bar plot
+    plt.figure(figsize=(20, 10))  # Make figure wider
+    
+    # Use a colormap for different labels
+    colors = plt.cm.get_cmap('tab20')(np.linspace(0, 1, len(label_data)))
+    
+    bottom = np.zeros(len(pairs))
+    bars = []
+    for i, (label, values) in enumerate(label_data.items()):
+        bar = plt.bar(range(len(pairs)), values, bottom=bottom, 
+                     label=label, color=colors[i])
+        bars.append(bar)
+        bottom += np.array(values)
+    
+    # Adjust the text sizes
+    plt.xticks(range(len(pairs)), pairs, rotation=45, ha='right', fontsize=14)
+    plt.yticks(fontsize=16)
+    plt.title('KL Divergence by Token Pairs and Labels (Sum)', fontsize=16)
+    plt.xlabel('Token Pair', fontsize=16)
+    plt.ylabel('Sum KL Divergence', fontsize=16)
+    plt.legend(bbox_to_anchor=(0.8, 1), loc='upper left', fontsize=16)
+    
+    plt.subplots_adjust(bottom=0.2)  # Add more space at bottom for labels
+    plt.tight_layout()
+    plt.show()
+    plt.savefig("../plots/kl_divergence_by_token_pairs_and_labels.png", 
+                bbox_inches='tight', dpi=300)  # Increased DPI for better quality
+    
+    # Print the values
+    print("\nTop token pairs by label contributions:")
+    for pair, total in top_pairs:
+        print(f"\n{pair[0]}, {pair[1]}: {total:.4f} total")
+        pair_labels = pair_data[pair]
+        for label, value in sorted(pair_labels.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {label}: {value:.4f}")
+
+# Create the stacked bar plot
+plot_stacked_token_pairs_by_label(kl_stats_per_next_token_and_label)
 
 # %%
