@@ -569,7 +569,7 @@ def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean', top_
     plt.ylabel(f'{metric.capitalize()} KL Divergence')
     plt.tight_layout()
     plt.show()
-    plt.savefig(f"../plots/{title}_{metric}.png")
+    plt.savefig(f"../plots/{title.replace(' ', '_').lower()}_{metric}_{deepseek_model_id}_{original_model_id}.png")
     
     # Print the list
     print(f"\nTop {n} {title} by {metric} (filtered to top {int(top_count_pct*100)}% by count):")
@@ -646,7 +646,7 @@ def plot_label_stats(stats_dict, metric='mean', top_count_pct=0.1):
     plt.ylabel(f'{metric.capitalize()} KL Divergence')
     plt.tight_layout()
     plt.show()
-    plt.savefig(f"../plots/kl_divergence_by_label_{metric}.png")
+    plt.savefig(f"../plots/kl_divergence_by_label_{metric}_{deepseek_model_id}_{original_model_id}.png")
     
     # Print detailed statistics
     print(f"\nLabel Statistics ({metric}, filtered to top {int(top_count_pct*100)}% by count):")
@@ -747,7 +747,7 @@ def plot_stacked_token_pairs_by_label(
     plt.subplots_adjust(bottom=0.2)  # Add more space at bottom for labels
     plt.tight_layout()
     plt.show()
-    plt.savefig(f"../plots/stacked_kl_divergence_by_token_pairs_and_labels_{metric}.png", 
+    plt.savefig(f"../plots/stacked_kl_divergence_by_token_pairs_and_labels_{metric}_{deepseek_model_id}_{original_model_id}.png", 
                 bbox_inches='tight', dpi=300)
     
     # Print the values with counts
