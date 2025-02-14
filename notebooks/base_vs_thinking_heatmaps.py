@@ -658,7 +658,7 @@ plot_label_stats(kl_stats_per_label, metric='sum')
 
 # %% Add stacked bar plot for token pairs by label
 
-def plot_stacked_token_pairs_by_label(stats_dict, n=20, metric='sum'):
+def plot_stacked_token_pairs_by_label(stats_dict, n=20, metric='sum', top_count_pct=0.1):
     """
     Create a stacked bar plot showing token pairs with different colors for each label
     
@@ -666,19 +666,33 @@ def plot_stacked_token_pairs_by_label(stats_dict, n=20, metric='sum'):
         stats_dict: Dictionary of statistics
         n: Number of top pairs to show
         metric: Either 'sum' or 'mean' to determine which metric to use for plotting
+        top_count_pct: Filter to keep only top percentage by count (0.1 = top 10%)
     """
     # First, organize data by token pairs
     pair_data = {}
+    pair_counts = {}  # Track total counts for each pair
     for (current_token, next_token, label), stats in stats_dict.items():
         pair_key = (current_token, next_token)
         if pair_key not in pair_data:
             pair_data[pair_key] = {}
+            pair_counts[pair_key] = 0
         mean, _, count, sum_val = stats.compute()
         value = sum_val.item() if metric == 'sum' else mean.item()
         pair_data[pair_key][label] = value
+        pair_counts[pair_key] += count
     
-    # Calculate total for each pair and sort
-    pair_totals = {pair: sum(label_values.values()) for pair, label_values in pair_data.items()}
+    # First filter by count - keep only top percentage of pairs
+    sorted_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)
+    cutoff_idx = max(1, int(len(sorted_pairs) * top_count_pct))
+    top_pairs_by_count = sorted_pairs[:cutoff_idx]
+    filtered_pairs = {pair: count for pair, count in top_pairs_by_count}
+    
+    # Calculate total for filtered pairs and sort
+    pair_totals = {
+        pair: sum(label_values.values()) 
+        for pair, label_values in pair_data.items() 
+        if pair in filtered_pairs
+    }
     top_pairs = sorted(pair_totals.items(), key=lambda x: x[1], reverse=True)[:n]
     
     # Prepare data for plotting
@@ -712,7 +726,8 @@ def plot_stacked_token_pairs_by_label(stats_dict, n=20, metric='sum'):
     # Adjust the text sizes
     plt.xticks(range(len(pairs)), pairs, rotation=45, ha='right', fontsize=14)
     plt.yticks(fontsize=16)
-    plt.title(f'Stacked KL Divergence by Token Pairs and Labels ({metric.capitalize()})', fontsize=16)
+    plt.title(f'Stacked KL Divergence by Token Pairs and Labels ({metric.capitalize()}, from top {int(top_count_pct*100)}% by count)', 
+              fontsize=16)
     plt.xlabel('Token Pair', fontsize=16)
     plt.ylabel(f'{metric.capitalize()} KL Divergence', fontsize=16)
     plt.legend(bbox_to_anchor=(0.8, 1), loc='upper left', fontsize=16)
@@ -724,9 +739,9 @@ def plot_stacked_token_pairs_by_label(stats_dict, n=20, metric='sum'):
                 bbox_inches='tight', dpi=300)
     
     # Print the values with counts
-    print(f"\nTop token pairs by label contributions ({metric}):")
+    print(f"\nTop token pairs by label contributions ({metric}, filtered to top {int(top_count_pct*100)}% by count):")
     for pair, total in top_pairs:
-        print(f"\n{pair[0]}, {pair[1]}: {total:.4f} total")
+        print(f"\n{pair[0]}, {pair[1]}: {total:.4f} total (count: {filtered_pairs[pair]})")
         pair_labels = pair_data[pair]
         for label, value in sorted(pair_labels.items(), key=lambda x: x[1], reverse=True):
             # Get the count from the original stats dictionary
