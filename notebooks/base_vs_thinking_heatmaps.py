@@ -154,8 +154,12 @@ def prepare_model_input(
                     # get the new label
                     label = annotated_response[label_start + 2:label_end]
                     current_label = label
+
+                    if current_label not in available_labels:
+                        current_label = None
+
                     current_pos = label_end + 2
-                    print(f"New label: {current_label} starting at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
+                    # print(f"New label: {current_label} starting at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
 
                     # Assign the new label to the last token processed
                     if last_token_index is not None:
@@ -175,7 +179,7 @@ def prepare_model_input(
                     token_to_label[i + 1] = current_label
                 current_pos = found_next + len(next_token)
                 last_token_index = i + 1
-                print(f"Assigning  label {current_label} to `{current_token}` and next token `{next_token}`. We are now at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
+                # print(f"Assigning  label {current_label} to `{current_token}` and next token `{next_token}`. We are now at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
                 i += 2  # Skip the next token since we've processed it
                 break
             
@@ -183,7 +187,7 @@ def prepare_model_input(
             elif found_current != -1:
                 token_to_label[i] = current_label
                 current_pos = found_current + len(current_token)
-                print(f"Assigning label {current_label} to `{current_token}`. We are now at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
+                # print(f"Assigning label {current_label} to `{current_token}`. We are now at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
                 last_token_index = i
                 i += 1  # Move to next token
                 break
@@ -419,7 +423,8 @@ response_uuids_to_collect = random.sample(all_response_uuids, responses_to_colle
 kl_stats_per_token = {}
 kl_stats_per_token_pair = {}
 kl_stats_per_next_token = {}
-kl_stats_per_label = {}  # New: tracks stats per label
+kl_stats_per_label = {}
+kl_stats_per_next_token_and_label = {}  # New: tracks stats per (current_token, next_token, next_token_label)
 
 for response_uuid in tqdm(response_uuids_to_collect):
     # Clear CUDA cache at the start of each iteration
@@ -457,6 +462,15 @@ for response_uuid in tqdm(response_uuids_to_collect):
         next_token = thinking_tokens[i + 1]
         current_kl = kl_divergence[i]
         next_kl = kl_divergence[i + 1]
+        next_token_label = model_input['token_to_label'].get(i + 1)  # Get label of next token
+
+        # Update token pair and label stats (using current token's KL)
+        if next_token_label is not None:  # Only track if next token has a label
+            triple_key = (current_token, next_token, next_token_label)
+            if triple_key not in kl_stats_per_next_token_and_label:
+                kl_stats_per_next_token_and_label[triple_key] = RunningMeanStd()
+            # Convert to float64 before passing to update
+            kl_stats_per_next_token_and_label[triple_key].update(current_kl.to(torch.float64).unsqueeze(0))
 
         # Update token pair stats (using current token's KL)
         pair_key = (current_token, next_token)
@@ -494,7 +508,8 @@ stats_to_save = {
     "token": kl_stats_per_token,
     "token_pair": kl_stats_per_token_pair,
     "next_token": kl_stats_per_next_token,
-    "label": kl_stats_per_label  # Add label stats
+    "label": kl_stats_per_label,
+    "next_token_and_label": kl_stats_per_next_token_and_label  # Add new stats
 }
 
 for stats_type, stats_dict in stats_to_save.items():
@@ -525,7 +540,10 @@ def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean'):
     
     # Create lists for plotting
     if pair_keys:
-        keys = [f"{t[0][0]}\n{t[0][1]}" for t in top_values]
+        if len(top_values[0][0]) == 2:
+            keys = [f"{t[0][0]}\n{t[0][1]}" for t in top_values]
+        else:
+            keys = [f"{t[0][0]}\n{t[0][1]}\n{t[0][2]}" for t in top_values]
     else:
         keys = [t[0] for t in top_values]
     metric_values = [t[1] for t in top_values]
@@ -545,7 +563,10 @@ def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean'):
     print(f"\nTop {n} {title} by {metric}:")
     for key, value, count in top_values:
         if pair_keys:
-            print(f"({key[0]}, {key[1]}): {value:.4f} (count: {count})")
+            if len(key) == 2:
+                print(f"({key[0]}, {key[1]}): {value:.4f} (count: {count})")
+            else:
+                print(f"({key[0]}, {key[1]}, {key[2]}): {value:.4f} (count: {count})")
         else:
             print(f"{key}: {value:.4f} (count: {count})")
 
@@ -558,6 +579,9 @@ plot_top_stats(kl_stats_per_token_pair, "Token Pairs", pair_keys=True, metric='s
 
 # plot_top_stats(kl_stats_per_next_token, "Next Tokens (Previous Token's KL)", metric='mean')
 # plot_top_stats(kl_stats_per_next_token, "Next Tokens (Previous Token's KL)", metric='sum')
+
+plot_top_stats(kl_stats_per_next_token_and_label, "Next Tokens and Labels", pair_keys=True, metric='mean')
+plot_top_stats(kl_stats_per_next_token_and_label, "Next Tokens and Labels", pair_keys=True, metric='sum')
 
 # %% Add visualization for label statistics
 
