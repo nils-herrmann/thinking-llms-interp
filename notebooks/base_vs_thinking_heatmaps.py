@@ -15,7 +15,8 @@ import numpy as np
 
 # %% Set model names
 deepseek_model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
-original_model_name = "Qwen/Qwen2.5-14B"
+# original_model_name = "Qwen/Qwen2.5-14B
+original_model_name = "Qwen/Qwen2.5-14B-Instruct"
 
 # %% Load models
 
@@ -60,9 +61,6 @@ random.shuffle(original_messages_data)
 print(f"Loading existing tasks from {tasks_json_path}")
 with open(tasks_json_path, 'r') as f:
     tasks_data = json.load(f)
-
-# %% Pick a random response uuid
-response_uuid = random.choice(annotated_responses_data)["response_uuid"]
 
 # %% Prepare model input
 
@@ -211,21 +209,6 @@ def prepare_model_input(
         'token_to_label': token_to_label
     }
 
-model_input = prepare_model_input(
-    response_uuid=response_uuid,
-    annotated_responses_data=annotated_responses_data,
-    tasks_data=tasks_data,
-    original_messages_data=original_messages_data,
-    tokenizer=deepseek_tokenizer
-)
-
-print(f"\nResponse UUID: {response_uuid}")
-print(f"Prompt and response IDs: `{deepseek_tokenizer.decode(model_input['prompt_and_response_ids'][0], skip_special_tokens=False)}`")
-print(f"Thinking response: `{deepseek_tokenizer.decode(model_input['thinking_token_ids'][0], skip_special_tokens=False)}`")
-
-for i, token in enumerate(model_input['thinking_token_ids'][0]):
-    print(f"{i}: {deepseek_tokenizer.decode(token)} -> {model_input['token_to_label'][i]}")
-
 
 # %% Feed the input to both models and get the logits for all tokens
 
@@ -260,12 +243,6 @@ def get_logits(prompt_and_response_ids, thinking_start_token_index, thinking_end
 
     return deepseek_logits, original_logits
 
-deepseek_logits, original_logits = get_logits(
-    prompt_and_response_ids=model_input['prompt_and_response_ids'],
-    thinking_start_token_index=model_input['thinking_start_token_index'],
-    thinking_end_token_index=model_input['thinking_end_token_index']
-)
-
 # %% Calculate the KL divergence between the logits
 
 def calculate_kl_divergence(p_logits, q_logits):
@@ -296,10 +273,33 @@ def calculate_kl_divergence(p_logits, q_logits):
 
     return kl_div
 
+# %% Pick a random response uuid and visualize the heatmap
+
+response_uuid = random.choice(annotated_responses_data)["response_uuid"]
+
+model_input = prepare_model_input(
+    response_uuid=response_uuid,
+    annotated_responses_data=annotated_responses_data,
+    tasks_data=tasks_data,
+    original_messages_data=original_messages_data,
+    tokenizer=deepseek_tokenizer
+)
+
+print(f"\nResponse UUID: {response_uuid}")
+print(f"Prompt and response IDs: `{deepseek_tokenizer.decode(model_input['prompt_and_response_ids'][0], skip_special_tokens=False)}`")
+print(f"Thinking response: `{deepseek_tokenizer.decode(model_input['thinking_token_ids'][0], skip_special_tokens=False)}`")
+
+for i, token in enumerate(model_input['thinking_token_ids'][0]):
+    print(f"{i}: {deepseek_tokenizer.decode(token)} -> {model_input['token_to_label'][i]}")
+
+deepseek_logits, original_logits = get_logits(
+    prompt_and_response_ids=model_input['prompt_and_response_ids'],
+    thinking_start_token_index=model_input['thinking_start_token_index'],
+    thinking_end_token_index=model_input['thinking_end_token_index']
+)
+
 # Calculate KL divergence for each position
 kl_divergence = calculate_kl_divergence(deepseek_logits, original_logits)
-
-# %% Create interactive visualization using activation_visualization
 
 # Get the tokens for visualization
 thinking_tokens = deepseek_tokenizer.convert_ids_to_tokens(
@@ -521,12 +521,17 @@ for stats_type, stats_dict in stats_to_save.items():
 
 # %% Add visualization for token pairs and next tokens
 
-def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean'):
+def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean', top_count_pct=0.1):
     """
     Plot statistics for tokens/pairs
     
     Args:
+        stats_dict: Dictionary of statistics
+        title: Title for the plot
+        n: Number of top items to show
+        pair_keys: Whether the keys are pairs/tuples
         metric: 'mean' or 'sum' to determine which metric to sort by
+        top_count_pct: Filter to keep only top percentage by count (0.1 = top 10%)
     """
     # Create a list of (key, value, count) tuples
     values = []
@@ -535,7 +540,12 @@ def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean'):
         value = sum_val.item() if metric == 'sum' else mean.item()
         values.append((key, value, count))
     
-    # Sort by the chosen metric
+    # First filter by count - keep only top percentage
+    values.sort(key=lambda x: x[2], reverse=True)
+    cutoff_idx = max(1, int(len(values) * top_count_pct))
+    values = values[:cutoff_idx]
+    
+    # Then sort by the chosen metric
     values.sort(key=lambda x: x[1], reverse=True)
     top_values = values[:n]
     
@@ -553,7 +563,7 @@ def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean'):
     plt.figure(figsize=(15, 6))
     plt.bar(range(len(keys)), metric_values)
     plt.xticks(range(len(keys)), keys, rotation=45, ha='right')
-    plt.title(f'{title} by {metric.capitalize()} KL Divergence (Top {n})')
+    plt.title(f'{title} by {metric.capitalize()} KL Divergence (Top {n}, from top {int(top_count_pct*100)}% by count)')
     plt.xlabel('Token' if not pair_keys else 'Token Pair')
     plt.ylabel(f'{metric.capitalize()} KL Divergence')
     plt.tight_layout()
@@ -561,7 +571,7 @@ def plot_top_stats(stats_dict, title, n=20, pair_keys=False, metric='mean'):
     plt.savefig(f"../plots/{title}_{metric}.png")
     
     # Print the list
-    print(f"\nTop {n} {title} by {metric}:")
+    print(f"\nTop {n} {title} by {metric} (filtered to top {int(top_count_pct*100)}% by count):")
     for key, value, count in top_values:
         if pair_keys:
             if len(key) == 2:
@@ -586,8 +596,15 @@ plot_top_stats(kl_stats_per_next_token_and_label, "Next Tokens and Labels", pair
 
 # %% Add visualization for label statistics
 
-def plot_label_stats(stats_dict, metric='mean'):
-    """Plot statistics for labels"""
+def plot_label_stats(stats_dict, metric='mean', top_count_pct=0.1):
+    """
+    Plot statistics for labels
+    
+    Args:
+        stats_dict: Dictionary of statistics
+        metric: 'mean' or 'sum' to determine which metric to sort by
+        top_count_pct: Filter to keep only top percentage by count (0.1 = top 10%)
+    """
     values = []
     for label, stats in stats_dict.items():
         mean, var, count, sum_val = stats.compute()
@@ -595,7 +612,12 @@ def plot_label_stats(stats_dict, metric='mean'):
         std_dev = torch.sqrt(var).item()
         values.append((label, value, count, std_dev))
     
-    # Sort by the chosen metric
+    # First filter by count - keep only top percentage
+    values.sort(key=lambda x: x[2], reverse=True)
+    cutoff_idx = max(1, int(len(values) * top_count_pct))
+    values = values[:cutoff_idx]
+    
+    # Then sort by the chosen metric
     values.sort(key=lambda x: x[1], reverse=True)
     
     # Create lists for plotting
@@ -618,7 +640,7 @@ def plot_label_stats(stats_dict, metric='mean'):
                 ha='center', va='bottom')
     
     plt.xticks(range(len(labels)), labels, rotation=45, ha='right')
-    plt.title(f'KL Divergence by Label ({metric.capitalize()})')
+    plt.title(f'KL Divergence by Label ({metric.capitalize()}, from top {int(top_count_pct*100)}% by count)')
     plt.xlabel('Label')
     plt.ylabel(f'{metric.capitalize()} KL Divergence')
     plt.tight_layout()
@@ -626,7 +648,7 @@ def plot_label_stats(stats_dict, metric='mean'):
     plt.savefig(f"../plots/kl_divergence_by_label_{metric}.png")
     
     # Print detailed statistics
-    print(f"\nLabel Statistics ({metric}):")
+    print(f"\nLabel Statistics ({metric}, filtered to top {int(top_count_pct*100)}% by count):")
     for label, value, count, std_dev in values:
         print(f"{label:20} {value:.4f} ± {std_dev:.4f} (count: {count})")
 
@@ -636,9 +658,14 @@ plot_label_stats(kl_stats_per_label, metric='sum')
 
 # %% Add stacked bar plot for token pairs by label
 
-def plot_stacked_token_pairs_by_label(stats_dict, n=20):
+def plot_stacked_token_pairs_by_label(stats_dict, n=20, metric='sum'):
     """
     Create a stacked bar plot showing token pairs with different colors for each label
+    
+    Args:
+        stats_dict: Dictionary of statistics
+        n: Number of top pairs to show
+        metric: Either 'sum' or 'mean' to determine which metric to use for plotting
     """
     # First, organize data by token pairs
     pair_data = {}
@@ -646,14 +673,15 @@ def plot_stacked_token_pairs_by_label(stats_dict, n=20):
         pair_key = (current_token, next_token)
         if pair_key not in pair_data:
             pair_data[pair_key] = {}
-        _, _, _, sum_val = stats.compute()
-        pair_data[pair_key][label] = sum_val.item()
+        mean, _, count, sum_val = stats.compute()
+        value = sum_val.item() if metric == 'sum' else mean.item()
+        pair_data[pair_key][label] = value
     
-    # Calculate total sum for each pair and sort
-    pair_sums = {pair: sum(label_sums.values()) for pair, label_sums in pair_data.items()}
-    top_pairs = sorted(pair_sums.items(), key=lambda x: x[1], reverse=True)[:n]
+    # Calculate total for each pair and sort
+    pair_totals = {pair: sum(label_values.values()) for pair, label_values in pair_data.items()}
+    top_pairs = sorted(pair_totals.items(), key=lambda x: x[1], reverse=True)[:n]
     
-    # Prepare data for plotting - modify this line to format tokens more clearly
+    # Prepare data for plotting
     pairs = []
     for p, _ in top_pairs:
         current_token = p[0].replace('\n', '\\n')  # Escape newlines in tokens
@@ -684,26 +712,29 @@ def plot_stacked_token_pairs_by_label(stats_dict, n=20):
     # Adjust the text sizes
     plt.xticks(range(len(pairs)), pairs, rotation=45, ha='right', fontsize=14)
     plt.yticks(fontsize=16)
-    plt.title('KL Divergence by Token Pairs and Labels (Sum)', fontsize=16)
+    plt.title(f'Stacked KL Divergence by Token Pairs and Labels ({metric.capitalize()})', fontsize=16)
     plt.xlabel('Token Pair', fontsize=16)
-    plt.ylabel('Sum KL Divergence', fontsize=16)
+    plt.ylabel(f'{metric.capitalize()} KL Divergence', fontsize=16)
     plt.legend(bbox_to_anchor=(0.8, 1), loc='upper left', fontsize=16)
     
     plt.subplots_adjust(bottom=0.2)  # Add more space at bottom for labels
     plt.tight_layout()
     plt.show()
-    plt.savefig("../plots/kl_divergence_by_token_pairs_and_labels.png", 
-                bbox_inches='tight', dpi=300)  # Increased DPI for better quality
+    plt.savefig(f"../plots/stacked_kl_divergence_by_token_pairs_and_labels_{metric}.png", 
+                bbox_inches='tight', dpi=300)
     
-    # Print the values
-    print("\nTop token pairs by label contributions:")
+    # Print the values with counts
+    print(f"\nTop token pairs by label contributions ({metric}):")
     for pair, total in top_pairs:
         print(f"\n{pair[0]}, {pair[1]}: {total:.4f} total")
         pair_labels = pair_data[pair]
         for label, value in sorted(pair_labels.items(), key=lambda x: x[1], reverse=True):
-            print(f"  {label}: {value:.4f}")
+            # Get the count from the original stats dictionary
+            count = stats_dict[(pair[0], pair[1], label)].count
+            print(f"  {label}: {value:.4f} (count: {int(count)})")
 
-# Create the stacked bar plot
-plot_stacked_token_pairs_by_label(kl_stats_per_next_token_and_label)
+# Create the stacked bar plots for both metrics
+plot_stacked_token_pairs_by_label(kl_stats_per_next_token_and_label, metric='sum')
+plot_stacked_token_pairs_by_label(kl_stats_per_next_token_and_label, metric='mean')
 
 # %%
