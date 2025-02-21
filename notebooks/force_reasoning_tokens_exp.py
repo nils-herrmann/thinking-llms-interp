@@ -23,6 +23,8 @@ thinking_labels = ["example-testing", "uncertainty-estimation", "backtracking"]
 # Which top k diverging tokens are we forcing per label?
 top_k_diverging_tokens = 10
 
+save_every_n_tasks = 20
+
 # %%
 
 seed = 42
@@ -310,7 +312,36 @@ def evaluate_answer(raw_response, correct_answer, model_name):
             return correct_answer in response
     
     print(f"No answer found in response of {model_name}. Expected answer: `{correct_answer}`\nResponse:\n`{raw_response}`")
-    return False    
+    return False
+
+def save_results(results, deepseek_model_name, original_model_name, output_dir="../data"):
+    """
+    Save experiment results to a file, creating the output directory if it doesn't exist.
+    
+    Args:
+        results: Dictionary containing experiment results
+        deepseek_model_name: Name of the deepseek model used
+        original_model_name: Name of the original model used
+        output_dir: Directory to save results in
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate output filename
+    output_path = os.path.join(
+        output_dir,
+        f"reasoning_tokens_forcing_{deepseek_model_name.split('/')[-1].lower()}.json"
+    )
+    
+    # Save results
+    with open(output_path, "w") as f:
+        json.dump({
+            "deepseek_model": deepseek_model_name,
+            "original_model": original_model_name,
+            "results": results
+        }, f, indent=2)
+    
+    print(f"\nResults saved to {output_path}")
 
 # %% Evaluate deepseek and original models
 
@@ -326,7 +357,7 @@ all_tasks = list(gsm8k_qs["problems-by-qid"].items())
 tasks_to_evaluate = random.sample(all_tasks, 300)
 
 print("Evaluating deepseek and original models...")
-for task_id, task in tqdm(tasks_to_evaluate):
+for i, (task_id, task) in enumerate(tqdm(tasks_to_evaluate)):
     expected_answer = task["answer-without-reasoning"]
 
     # Generate responses from both models
@@ -360,6 +391,9 @@ for task_id, task in tqdm(tasks_to_evaluate):
         "num_tokens": deepseek_num_tokens
     })
     
+    # Save partial results
+    if (i + 1) % save_every_n_tasks == 0:
+        save_results(results, deepseek_model_name, original_model_name)
 
 # %% Create modified prompting function that forces the thinking tokens
 
@@ -386,9 +420,14 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
     Uses token-by-token generation to check and potentially force specific token sequences.
     Considers token pairs from all thinking labels.
     Forces a token only when it's the most likely next token according to deepseek.
+    
+    Returns:
+        tuple: (response, num_tokens, forced_tokens_info)
+        where forced_tokens_info is a list of dicts containing info about each forced token
     """
     # Get all token pairs to watch for
     force_tokens = get_all_force_tokens()
+    forced_tokens_info = []  # Track info about forced tokens
 
     user_message = generate_user_message(task)
     
@@ -415,7 +454,7 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
     # Generate response token by token
     generated_ids = input_ids.clone()
 
-    for _ in range(max_tokens):
+    for token_pos in range(max_tokens):
         # Get next token distribution from original model
         with torch.no_grad():
             outputs = model(generated_ids)
@@ -445,10 +484,19 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
 
                     target_token_id = tokenizer.encode(target_next_token, add_special_tokens=False)[0]
                     if deepseek_next_token_id == target_token_id:
+                        # Store forcing event information
+                        forced_tokens_info.append({
+                            "trigger_token": last_token,
+                            "labels": force_tokens[last_token][target_next_token],
+                            "forced_next_token": target_next_token,
+                            "position": token_pos,
+                            "original_next_token": original_next_token
+                        })
+                        
                         # Log the forcing event
                         response_so_far = tokenizer.decode(generated_ids[0, input_ids.shape[1]:], skip_special_tokens=False)
                         
-                        print(f"\n### Forcing token in task: {task['task_uuid']}")
+                        print(f"\n### Forcing token in task: {task_id}")
                         print(f"Response so far: `{response_so_far}`")
                         print(f"Labels forcing token: {force_tokens[last_token][target_next_token]}")
                         print(f"Trigger token: {last_token}")
@@ -477,16 +525,16 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
     response = tokenizer.decode(response_ids, skip_special_tokens=False)
     num_tokens = len(response_ids)
     
-    return response.strip(), num_tokens
+    return response.strip(), num_tokens, forced_tokens_info
 
 # %% Evaluate original model with forced thinking tokens
 
 print("\nEvaluating original model with forced thinking tokens...")
 results["original_with_thinking_tokens"] = {"correct": 0, "total": 0, "responses": []}
 
-for task_id, task in tqdm(tasks_to_evaluate):
+for i, (task_id, task) in enumerate(tqdm(tasks_to_evaluate)):
     expected_answer = task["answer-without-reasoning"]
-    response, num_tokens = generate_thinking_model_response_with_forcing(
+    response, num_tokens, forced_tokens_info = generate_thinking_model_response_with_forcing(
         original_model, 
         original_tokenizer, 
         task
@@ -504,8 +552,13 @@ for task_id, task in tqdm(tasks_to_evaluate):
         "correct_answer": expected_answer,
         "model_response": response,
         "is_correct": is_correct,
-        "num_tokens": num_tokens
+        "num_tokens": num_tokens,
+        "forced_tokens_info": forced_tokens_info  # Add the forced tokens info
     })
+    
+    # Save partial results
+    if (i + 1) % save_every_n_tasks == 0:
+        save_results(results, deepseek_model_name, original_model_name)
 
 # %% Print overall results
 for model_name, model_results in results.items():
@@ -527,14 +580,5 @@ for model_name, model_results in results.items():
         cat_accuracy = stats["correct"] / stats["total"]
         print(f"{category}: {cat_accuracy:.2%} ({stats['correct']}/{stats['total']})")
 
-# %% Save results to file
-
-output_path = f"../data/reasoning_tokens_forcing_{deepseek_model_name.split('/')[-1].lower()}.json"
-with open(output_path, "w") as f:
-    json.dump({
-        "deepseek_model": deepseek_model_name,
-        "original_model": original_model_name,
-        "results": results
-    }, f, indent=2)
-
-print(f"\nResults saved to {output_path}")
+# %% Save final results
+save_results(results, deepseek_model_name, original_model_name)
