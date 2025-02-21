@@ -15,13 +15,13 @@ original_model_name = "Qwen/Qwen2.5-14B"
 # original_model_name = "Qwen/Qwen2.5-14B-Instruct"
 
 # Generation parameters
-max_tokens = 5000  # Maximum number of tokens to generate
+max_tokens = 3000  # Maximum number of tokens to generate
 
 # Which labels are we forcing?
 thinking_labels = ["example-testing", "uncertainty-estimation", "backtracking"]
 
 # Which top k diverging tokens are we forcing per label?
-top_k_diverging_tokens = 5
+top_k_diverging_tokens = 10
 
 # %%
 
@@ -46,10 +46,10 @@ original_model = AutoModelForCausalLM.from_pretrained(
 
 # %% Load the answer_tasks.json file
 
-answer_tasks_path = "../data/answer_tasks.json"
+gsm8k_path = "../data/gsm8k.json"
 
-with open(answer_tasks_path, "r") as f:
-    answer_tasks = json.load(f)
+with open(gsm8k_path, "r") as f:
+    gsm8k_qs = json.load(f)
 
 # %%
 
@@ -218,7 +218,7 @@ for label in thinking_labels:
 # %% Define evaluation functions
 
 def generate_user_message(task):
-    question = task["prompt_message"]["content"]
+    question = task["q-str"]
     return f"Here is a question: '{question}'\n\nPlease think step by step about it. Once you have thought carefully about it, provide your final answer as 'Answer: <answer>'."
 
 def generate_original_model_response(model, tokenizer, task):
@@ -320,24 +320,30 @@ results = {
     "original_with_thinking_tokens": {"correct": 0, "total": 0, "responses": []}
 }
 
+all_tasks = list(gsm8k_qs["problems-by-qid"].items())
+
+# randomly sample 300 tasks
+tasks_to_evaluate = random.sample(all_tasks, 300)
+
 print("Evaluating deepseek and original models...")
-for task in tqdm(answer_tasks):
+for task_id, task in tqdm(tasks_to_evaluate):
+    expected_answer = task["answer-without-reasoning"]
+
     # Generate responses from both models
     original_response, original_num_tokens = generate_original_model_response(original_model, original_tokenizer, task)
     deepseek_response, deepseek_num_tokens = generate_thinking_model_response(deepseek_model, deepseek_tokenizer, task)
     
     # Evaluate responses
-    original_correct = evaluate_answer(original_response, task["answer"], "original")
-    deepseek_correct = evaluate_answer(deepseek_response, task["answer"], "deepseek")
+    original_correct = evaluate_answer(original_response, expected_answer, "original")
+    deepseek_correct = evaluate_answer(deepseek_response, expected_answer, "deepseek")
     
     # Update results
     results["original"]["correct"] += original_correct
     results["original"]["total"] += 1
     results["original"]["responses"].append({
-        "task_uuid": task["task_uuid"],
-        "task_category": task["task_category"],
-        "question": task["prompt_message"]["content"],
-        "correct_answer": task["answer"],
+        "task_uuid": task_id,
+        "question": task["q-str"],
+        "correct_answer": expected_answer,
         "model_response": original_response,
         "is_correct": original_correct,
         "num_tokens": original_num_tokens
@@ -346,10 +352,9 @@ for task in tqdm(answer_tasks):
     results["deepseek"]["correct"] += deepseek_correct
     results["deepseek"]["total"] += 1
     results["deepseek"]["responses"].append({
-        "task_uuid": task["task_uuid"],
-        "task_category": task["task_category"],
-        "question": task["prompt_message"]["content"],
-        "correct_answer": task["answer"],
+        "task_uuid": task_id,
+        "question": task["q-str"],
+        "correct_answer": expected_answer,
         "model_response": deepseek_response,
         "is_correct": deepseek_correct,
         "num_tokens": deepseek_num_tokens
@@ -479,7 +484,8 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
 print("\nEvaluating original model with forced thinking tokens...")
 results["original_with_thinking_tokens"] = {"correct": 0, "total": 0, "responses": []}
 
-for task in tqdm(answer_tasks):
+for task_id, task in tqdm(tasks_to_evaluate):
+    expected_answer = task["answer-without-reasoning"]
     response, num_tokens = generate_thinking_model_response_with_forcing(
         original_model, 
         original_tokenizer, 
@@ -487,16 +493,15 @@ for task in tqdm(answer_tasks):
     )
     
     # Evaluate response
-    is_correct = evaluate_answer(response, task["answer"], "original_with_thinking_tokens")
+    is_correct = evaluate_answer(response, expected_answer, "original_with_thinking_tokens")
     
     # Update results
     results["original_with_thinking_tokens"]["correct"] += is_correct
     results["original_with_thinking_tokens"]["total"] += 1
     results["original_with_thinking_tokens"]["responses"].append({
-        "task_uuid": task["task_uuid"],
-        "task_category": task["task_category"],
-        "question": task["prompt_message"]["content"],
-        "correct_answer": task["answer"],
+        "task_uuid": task_id,
+        "question": task["q-str"],
+        "correct_answer": expected_answer,
         "model_response": response,
         "is_correct": is_correct,
         "num_tokens": num_tokens
