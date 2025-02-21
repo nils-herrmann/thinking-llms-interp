@@ -252,8 +252,11 @@ def generate_original_model_response(model, tokenizer, task):
         )
     
     # Extract the generated response (excluding the prompt)
-    response = tokenizer.decode(outputs[0][input_ids.shape[1]:], skip_special_tokens=True)
-    return response.strip()
+    response_ids = outputs[0][input_ids.shape[1]:]
+    response = tokenizer.decode(response_ids, skip_special_tokens=True)
+    num_tokens = len(response_ids)
+    
+    return response.strip(), num_tokens
 
 def generate_thinking_model_response(model, tokenizer, task):
     """Generate a response from the model for a given task"""
@@ -279,10 +282,13 @@ def generate_thinking_model_response(model, tokenizer, task):
         )
     
     # Extract the generated response (excluding the prompt)
-    response = tokenizer.decode(outputs[0][input_ids.shape[1]:], skip_special_tokens=True)
-    return response.strip()
+    response_ids = outputs[0][input_ids.shape[1]:]
+    response = tokenizer.decode(response_ids, skip_special_tokens=True)
+    num_tokens = len(response_ids)
+    
+    return response.strip(), num_tokens
 
-def evaluate_answer(raw_response, correct_answer):
+def evaluate_answer(raw_response, correct_answer, model_name):
     """
     Compare the model's response to the correct answer.
     Returns True if the response contains the correct answer.
@@ -290,15 +296,18 @@ def evaluate_answer(raw_response, correct_answer):
     # Convert both to lowercase for case-insensitive comparison
     response = raw_response.lower()
     correct_answer = correct_answer.lower()
+    
+    answer_prefixes = ["answer:", "the answer is"]
 
-    if "answer:" in response:
-        response = response.split("answer:")[1].strip()
-        # Remove common punctuation and whitespace after "answer:"
-        response = ''.join(c for c in response if c.isalnum())
-        return correct_answer in response
-    else:
-        print(f"No answer tag found in response. Expected answer: `{correct_answer}`\nResponse:\n`{raw_response}`")
-        return False    
+    for prefix in answer_prefixes:
+        if prefix in response:
+            response = response.split(prefix)[1].strip()
+            # Remove common punctuation and whitespace after answer prefix
+            response = ''.join(c for c in response if c.isalnum())
+            return correct_answer in response
+    
+    print(f"No answer found in response of {model_name}. Expected answer: `{correct_answer}`\nResponse:\n`{raw_response}`")
+    return False    
 
 # %% Evaluate deepseek and original models
 
@@ -311,25 +320,14 @@ results = {
 print("Evaluating deepseek and original models...")
 for task in tqdm(answer_tasks):
     # Generate responses from both models
-    original_response = generate_original_model_response(original_model, original_tokenizer, task)
-    deepseek_response = generate_thinking_model_response(deepseek_model, deepseek_tokenizer, task)
+    original_response, original_num_tokens = generate_original_model_response(original_model, original_tokenizer, task)
+    deepseek_response, deepseek_num_tokens = generate_thinking_model_response(deepseek_model, deepseek_tokenizer, task)
     
     # Evaluate responses
-    deepseek_correct = evaluate_answer(deepseek_response, task["answer"])
-    original_correct = evaluate_answer(original_response, task["answer"])
+    original_correct = evaluate_answer(original_response, task["answer"], "original")
+    deepseek_correct = evaluate_answer(deepseek_response, task["answer"], "deepseek")
     
     # Update results
-    results["deepseek"]["correct"] += deepseek_correct
-    results["deepseek"]["total"] += 1
-    results["deepseek"]["responses"].append({
-        "task_uuid": task["task_uuid"],
-        "task_category": task["task_category"],
-        "question": task["prompt_message"]["content"],
-        "correct_answer": task["answer"],
-        "model_response": deepseek_response,
-        "is_correct": deepseek_correct
-    })
-    
     results["original"]["correct"] += original_correct
     results["original"]["total"] += 1
     results["original"]["responses"].append({
@@ -338,8 +336,22 @@ for task in tqdm(answer_tasks):
         "question": task["prompt_message"]["content"],
         "correct_answer": task["answer"],
         "model_response": original_response,
-        "is_correct": original_correct
+        "is_correct": original_correct,
+        "num_tokens": original_num_tokens
     })
+
+    results["deepseek"]["correct"] += deepseek_correct
+    results["deepseek"]["total"] += 1
+    results["deepseek"]["responses"].append({
+        "task_uuid": task["task_uuid"],
+        "task_category": task["task_category"],
+        "question": task["prompt_message"]["content"],
+        "correct_answer": task["answer"],
+        "model_response": deepseek_response,
+        "is_correct": deepseek_correct,
+        "num_tokens": deepseek_num_tokens
+    })
+    
 
 # %% Create modified prompting function that forces the thinking tokens
 
@@ -425,8 +437,11 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
             break
     
     # Extract the generated response (excluding the prompt)
-    response = tokenizer.decode(generated_ids[0, input_ids.shape[1]:], skip_special_tokens=True)
-    return response.strip()
+    response_ids = generated_ids[0, input_ids.shape[1]:]
+    response = tokenizer.decode(response_ids, skip_special_tokens=True)
+    num_tokens = len(response_ids)
+    
+    return response.strip(), num_tokens
 
 # %% Evaluate original model with forced thinking tokens
 
@@ -434,14 +449,14 @@ print("\nEvaluating original model with forced thinking tokens...")
 results["original_with_thinking_tokens"] = {"correct": 0, "total": 0, "responses": []}
 
 for task in tqdm(answer_tasks):
-    response = generate_thinking_model_response_with_forcing(
+    response, num_tokens = generate_thinking_model_response_with_forcing(
         original_model, 
         original_tokenizer, 
         task
     )
     
     # Evaluate response
-    is_correct = evaluate_answer(response, task["answer"])
+    is_correct = evaluate_answer(response, task["answer"], "original_with_thinking_tokens")
     
     # Update results
     results["original_with_thinking_tokens"]["correct"] += is_correct
@@ -452,7 +467,8 @@ for task in tqdm(answer_tasks):
         "question": task["prompt_message"]["content"],
         "correct_answer": task["answer"],
         "model_response": response,
-        "is_correct": is_correct
+        "is_correct": is_correct,
+        "num_tokens": num_tokens
     })
 
 # %% Print overall results
