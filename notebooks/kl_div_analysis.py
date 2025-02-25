@@ -322,72 +322,120 @@ display(HTML(html))
 
 # %%
 
+def get_kl_stats_path(deepseek_model_name: str, original_model_name: str) -> str:
+    """Get the path to the KL stats file."""
+    return f"../data/kl_stats/normalized_kl_scores_{deepseek_model_name.split('/')[-1].lower()}_{original_model_name.split('/')[-1].lower()}.pkl"
+
+def save_kl_stats(stats: dict, deepseek_model_name: str, original_model_name: str) -> None:
+    """Save KL stats to a pickle file."""
+    output_path = get_kl_stats_path(deepseek_model_name, original_model_name)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'wb') as f:
+        pickle.dump(stats, f)
+    print(f"\nSaved normalized KL scores to {output_path}")
+
+def load_kl_stats(deepseek_model_name: str, original_model_name: str) -> dict:
+    """Load KL stats from a pickle file if it exists."""
+    stats_path = get_kl_stats_path(deepseek_model_name, original_model_name)
+    if os.path.exists(stats_path):
+        with open(stats_path, 'rb') as f:
+            return pickle.load(f)
+    return None
+
+def collect_kl_stats(
+    responses_to_analyze: int,
+    annotated_responses_data: list,
+    tasks_data: list,
+    original_messages_data: list,
+    deepseek_tokenizer,
+    deepseek_model_name: str,
+    original_model_name: str
+) -> dict:
+    """Collect KL divergence statistics across responses."""
+    # Try to load existing stats first
+    existing_stats = load_kl_stats(deepseek_model_name, original_model_name)
+    if existing_stats is not None:
+        print(f"Loaded existing KL stats for {len(existing_stats)} tokens")
+        return existing_stats
+
+    # Dictionary to store KL divergence sums and counts for next tokens
+    next_token_stats = {}
+
+    all_response_uuids = [response["response_uuid"] for response in annotated_responses_data]
+    response_uuids_to_analyze = random.sample(all_response_uuids, responses_to_analyze)
+
+    print(f"Analyzing {responses_to_analyze} responses from {len(all_response_uuids)} total responses")
+
+    for response_uuid in tqdm(response_uuids_to_analyze):
+        # Clear CUDA cache at the start of each iteration
+        torch.cuda.empty_cache()
+        
+        model_input = prepare_model_input(
+            response_uuid=response_uuid, 
+            annotated_responses_data=annotated_responses_data, 
+            tasks_data=tasks_data, 
+            original_messages_data=original_messages_data, 
+            tokenizer=deepseek_tokenizer
+        )
+
+        deepseek_logits, original_logits = get_logits(
+            prompt_and_response_ids=model_input['prompt_and_response_ids'],
+            thinking_start_token_index=model_input['thinking_start_token_index'],
+            thinking_end_token_index=model_input['thinking_end_token_index']
+        )
+
+        kl_divergence = calculate_kl_divergence(deepseek_logits, original_logits)
+        thinking_tokens = deepseek_tokenizer.batch_decode(model_input['thinking_token_ids'][0])
+
+        # Process each token pair in the response
+        response_kl_stats = {}
+        for i in range(len(thinking_tokens) - 1):
+            current_token = thinking_tokens[i]
+            next_token = thinking_tokens[i + 1]
+            current_kl = kl_divergence[i].item()
+
+            if next_token not in response_kl_stats:
+                response_kl_stats[next_token] = {
+                    'kl_sum': 0.0,
+                    'total_occurrences': 0
+                }
+            
+            response_kl_stats[next_token]['kl_sum'] += current_kl
+            response_kl_stats[next_token]['total_occurrences'] += 1
+
+        for token, stats in response_kl_stats.items():
+            if token not in next_token_stats:
+                next_token_stats[token] = {
+                    'sum_of_avg_kl_div': 0.0,
+                    'response_uuids': set()
+                }
+            next_token_stats[token]['sum_of_avg_kl_div'] += stats['kl_sum'] / stats['total_occurrences']
+            next_token_stats[token]['response_uuids'].add(response_uuid)
+
+    # Calculate normalized KL divergence for each token
+    for token, stats in next_token_stats.items():
+        normalized_kl = stats['sum_of_avg_kl_div'] / len(response_uuids_to_analyze)
+        next_token_stats[token]['normalized_kl'] = normalized_kl
+
+    # Save the collected stats
+    save_kl_stats(next_token_stats, deepseek_model_name, original_model_name)
+
+    return next_token_stats
+
+# Replace the KL stats collection section with:
+
 responses_to_analyze = 1000  # Number of responses to analyze
 top_tokens_to_show = 30    # Number of top tokens to display
 
-# Dictionary to store KL divergence sums and counts for next tokens
-# Structure: next_token -> {sum_of_avg_kl_div: float, num_responses: int, total_occurrences: int}
-next_token_stats = {}
-
-all_response_uuids = [response["response_uuid"] for response in annotated_responses_data]
-response_uuids_to_analyze = random.sample(all_response_uuids, responses_to_analyze)
-
-print(f"Analyzing {responses_to_analyze} responses from {len(all_response_uuids)} total responses")
-
-for response_uuid in tqdm(response_uuids_to_analyze):
-    # Clear CUDA cache at the start of each iteration
-    torch.cuda.empty_cache()
-    
-    model_input = prepare_model_input(
-        response_uuid=response_uuid, 
-        annotated_responses_data=annotated_responses_data, 
-        tasks_data=tasks_data, 
-        original_messages_data=original_messages_data, 
-        tokenizer=deepseek_tokenizer
-    )
-
-    deepseek_logits, original_logits = get_logits(
-        prompt_and_response_ids=model_input['prompt_and_response_ids'],
-        thinking_start_token_index=model_input['thinking_start_token_index'],
-        thinking_end_token_index=model_input['thinking_end_token_index']
-    )
-
-    kl_divergence = calculate_kl_divergence(deepseek_logits, original_logits)
-    thinking_tokens = deepseek_tokenizer.batch_decode(model_input['thinking_token_ids'][0])
-
-    # Process each token pair in the response
-    response_kl_stats = {}
-    for i in range(len(thinking_tokens) - 1):
-        current_token = thinking_tokens[i]
-        next_token = thinking_tokens[i + 1]
-        current_kl = kl_divergence[i].item()  # Get KL value for current token
-
-        # Initialize stats for next token if not seen before
-        if next_token not in response_kl_stats:
-            response_kl_stats[next_token] = {
-                'kl_sum': 0.0,
-                'total_occurrences': 0
-            }
-        
-        # Update stats for next token
-        response_kl_stats[next_token]['kl_sum'] += current_kl
-        response_kl_stats[next_token]['total_occurrences'] += 1
-
-    for token, stats in response_kl_stats.items():
-        if token not in next_token_stats:
-            next_token_stats[token] = {
-                'sum_of_avg_kl_div': 0.0,
-                'response_uuids': set()
-            }
-        next_token_stats[token]['sum_of_avg_kl_div'] += stats['kl_sum'] / stats['total_occurrences']
-        next_token_stats[token]['response_uuids'].add(response_uuid)
-
-# Calculate normalized KL divergence for each token
-for token, stats in next_token_stats.items():
-    normalized_kl = stats['sum_of_avg_kl_div'] / len(response_uuids_to_analyze)  # Normalize by number of responses
-    next_token_stats[token]['normalized_kl'] = normalized_kl
-
-# %%
+next_token_stats = collect_kl_stats(
+    responses_to_analyze=responses_to_analyze,
+    annotated_responses_data=annotated_responses_data,
+    tasks_data=tasks_data,
+    original_messages_data=original_messages_data,
+    deepseek_tokenizer=deepseek_tokenizer,
+    deepseek_model_name=deepseek_model_name,
+    original_model_name=original_model_name
+)
 
 # Sort tokens by normalized KL divergence
 sorted_tokens = sorted(
@@ -420,11 +468,5 @@ plt.xlabel('Token')
 plt.ylabel('Normalized KL Divergence across all responses')
 plt.tight_layout()
 plt.show()
-
-# Save results to file
-output_path = f"../data/kl_stats/normalized_kl_scores_{deepseek_model_name.split('/')[-1].lower()}_{original_model_name.split('/')[-1].lower()}.pkl"
-with open(output_path, 'wb') as f:
-    pickle.dump(next_token_stats, f)
-print(f"\nSaved normalized KL scores to {output_path}")
 
 # %%
