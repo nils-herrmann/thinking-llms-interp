@@ -29,6 +29,9 @@ EXPERIMENT_PARAMS = {
     "tokens_to_exclude": ["\n", "I", ":", "'m", ".\n"]
 }
 
+# Disable gradients globally
+torch.set_grad_enabled(False)
+
 # Set random seed
 random.seed(EXPERIMENT_PARAMS["seed"])
 
@@ -153,78 +156,6 @@ def prepare_model_input(
     thinking_end_token_index = next((i for i, token in enumerate(prompt_and_response_ids_list) if token == thinking_end_token_id), -1)
 
     thinking_token_ids = prompt_and_response_ids[:, thinking_start_token_index:thinking_end_token_index]
-
-    # Build token position to label mapping
-    token_to_label = {}
-    # Remove end-section markers from annotated response
-    annotated_response = annotated_response_data["annotated_response"].replace('[\"end-section\"]', '')
-    current_pos = 0
-    current_label = None
-    last_token_index = None  # Track the last token index we processed
-
-    # Process tokens from thinking start to end
-    i = 0
-    while i < thinking_token_ids.size(1):
-        current_token = deepseek_tokenizer.decode(thinking_token_ids[0, i])
-        next_token = deepseek_tokenizer.decode(thinking_token_ids[0, i + 1]) if i + 1 < thinking_token_ids.size(1) else None
-        
-        # Search for labels and tokens from current position
-        while current_pos < len(annotated_response):
-            # Check for label markers, accounting for whitespace
-            if annotated_response[current_pos:].strip().startswith('["'):
-                # Find the actual start of the label marker after current_pos
-                label_start = annotated_response.find('["', current_pos)
-                label_end = annotated_response.find('"]', label_start)
-                if label_end != -1:
-                    # get the new label
-                    label = annotated_response[label_start + 2:label_end]
-                    current_label = label
-
-                    if current_label not in available_labels:
-                        current_label = None
-
-                    current_pos = label_end + 2
-                    # print(f"New label: {current_label} starting at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
-
-                    # Assign the new label to the last token processed
-                    if last_token_index is not None:
-                        token_to_label[last_token_index] = current_label
-                        last_token_index = None
-
-                    continue
-            
-            # Try to find current token
-            found_current = annotated_response.find(current_token, current_pos)
-            found_next = -1 if next_token is None else annotated_response.find(next_token, current_pos)
-            
-            # If next token is found before current token
-            if found_next != -1 and (found_current == -1 or found_next < found_current):
-                token_to_label[i] = current_label
-                if i + 1 < thinking_token_ids.size(1):
-                    token_to_label[i + 1] = current_label
-                current_pos = found_next + len(next_token)
-                last_token_index = i + 1
-                # print(f"Assigning  label {current_label} to `{current_token}` and next token `{next_token}`. We are now at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
-                i += 2  # Skip the next token since we've processed it
-                break
-            
-            # If current token is found
-            elif found_current != -1:
-                token_to_label[i] = current_label
-                current_pos = found_current + len(current_token)
-                # print(f"Assigning label {current_label} to `{current_token}`. We are now at {current_pos}: `{annotated_response[current_pos:current_pos+5]}`")
-                last_token_index = i
-                i += 1  # Move to next token
-                break
-            
-            # If neither token is found, move to next character
-            else:
-                current_pos += 1
-                
-        # If we've reached the end of annotated response
-        if current_pos >= len(annotated_response):
-            token_to_label[i] = None
-            i += 1  # Move to next token
     
     return {
         'prompt_and_response_ids': prompt_and_response_ids,
@@ -232,41 +163,46 @@ def prepare_model_input(
         'thinking_start_token_index': thinking_start_token_index,
         'thinking_end_token_index': thinking_end_token_index,
         'thinking_token_ids': thinking_token_ids,
-        'token_to_label': token_to_label
     }
 
 
 # %% Feed the input to both models and get the logits for all tokens
 
 def get_logits(prompt_and_response_ids, thinking_start_token_index, thinking_end_token_index):
+    """Get logits from both models with memory-efficient handling."""
     # Clear CUDA cache before processing
     torch.cuda.empty_cache()
     
-    # Get logits from both models
+    # Process models one at a time to reduce memory usage
+    # DeepSeek model logits
     with torch.no_grad():
-        # DeepSeek model logits
         deepseek_outputs = deepseek_model(
             input_ids=prompt_and_response_ids.to(deepseek_model.device)
         )
-        deepseek_logits = deepseek_outputs.logits.cpu()  # Move to CPU immediately
-        del deepseek_outputs  # Free memory
-        torch.cuda.empty_cache()
-        
-        # Original model logits
+        # Only keep the logits we need and move to CPU immediately
+        deepseek_logits = deepseek_outputs.logits[
+            0, 
+            thinking_start_token_index:thinking_end_token_index
+        ].cpu()
+        del deepseek_outputs
+    
+    # Clear memory before processing next model
+    torch.cuda.empty_cache()
+    
+    # Original model logits
+    with torch.no_grad():
         original_outputs = original_model(
             input_ids=prompt_and_response_ids.to(original_model.device)
         )
-        original_logits = original_outputs.logits.cpu()  # Move to CPU immediately
-        del original_outputs  # Free memory
-        torch.cuda.empty_cache()
-
-    # Assert both logits have the same shape
-    assert deepseek_logits.shape == original_logits.shape
-
-    # Return only the logits for the thinking tokens
-    deepseek_logits = deepseek_logits[0, thinking_start_token_index:thinking_end_token_index]
-    original_logits = original_logits[0, thinking_start_token_index:thinking_end_token_index]
-
+        # Only keep the logits we need and move to CPU immediately
+        original_logits = original_outputs.logits[
+            0,
+            thinking_start_token_index:thinking_end_token_index
+        ].cpu()
+        del original_outputs
+    
+    torch.cuda.empty_cache()
+    
     return deepseek_logits, original_logits
 
 # %% Calculate the KL divergence between the logits
@@ -415,6 +351,10 @@ def collect_kl_stats(
             tokenizer=deepseek_tokenizer
         )
 
+        # Move input tensors to CPU until needed
+        model_input['prompt_and_response_ids'] = model_input['prompt_and_response_ids'].cpu()
+        model_input['thinking_token_ids'] = model_input['thinking_token_ids'].cpu()
+
         deepseek_logits, original_logits = get_logits(
             prompt_and_response_ids=model_input['prompt_and_response_ids'],
             thinking_start_token_index=model_input['thinking_start_token_index'],
@@ -422,6 +362,13 @@ def collect_kl_stats(
         )
 
         kl_divergence = calculate_kl_divergence(deepseek_logits, original_logits)
+        
+        # Clean up large tensors we don't need anymore
+        del deepseek_logits
+        del original_logits
+        torch.cuda.empty_cache()
+
+        # Rest of the processing remains the same...
         thinking_token_ids = model_input['thinking_token_ids'][0]
         
         # Process each token pair in the response
