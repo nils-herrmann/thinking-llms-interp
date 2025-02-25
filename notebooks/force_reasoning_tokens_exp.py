@@ -17,7 +17,7 @@ original_model_name = "Qwen/Qwen2.5-14B"
 # Generation parameters
 max_tokens_deepseek = 3000  # Maximum number of tokens for deepseek model
 max_tokens_original = 500  # Maximum number of tokens for original model
-max_tokens_forced = 2000  # Maximum number of tokens for original model with forced tokens
+max_tokens_forced = 3000  # Maximum number of tokens for original model with forced tokens
 
 # Token forcing parameters
 top_k_for_checking_eos = 1  # End generation if EOS token is in top-k predictions of original model
