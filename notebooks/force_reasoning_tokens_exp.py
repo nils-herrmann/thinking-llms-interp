@@ -28,7 +28,7 @@ min_token_count = 10  # Minimum count for a token to be considered for forcing
 
 # Experiment parameters
 dataset_name = "math"  # "gsm8k" or "math"
-num_tasks = 20  # Number of tasks to randomly sample
+num_tasks = 500  # Number of tasks to randomly sample
 save_every_n_tasks = 20  # How often to save intermediate results
 seed = 42  # Random seed for reproducibility
 
