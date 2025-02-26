@@ -29,7 +29,7 @@ EXPERIMENT_PARAMS = {
     "seed": 42,                   # Random seed
     
     # Token filtering
-    "tokens_to_exclude": ["\n", "I", ":", "'m", ".\n", "'ve"]
+    "tokens_to_exclude": ["\n", "I", ":", "'m", ".\n"]
 }
 
 # Disable gradients globally
