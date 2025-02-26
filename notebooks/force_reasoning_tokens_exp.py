@@ -634,15 +634,52 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
     return response.strip(), num_tokens, forced_tokens_info
 
 # %% Generate responses if needed
-models_with_new_results = []
-if len(results["deepseek"]["responses"]) > 0:
-    print("Skipping deepseek model generation - results already exist")
-else:
-    print("Generating deepseek model responses...")
-    models_with_new_results.append("deepseek")
-    for i, (task_id, task) in enumerate(tqdm(tasks_to_evaluate)):
+def get_tasks_needing_evaluation(existing_responses, tasks_to_evaluate):
+    """
+    Returns a list of tasks that need evaluation by comparing against existing responses.
+    
+    Args:
+        existing_responses: List of response dictionaries from results
+        tasks_to_evaluate: List of (task_id, task) tuples to check
+        
+    Returns:
+        List of (task_id, task) tuples that need evaluation
+    """
+    # Build set of task IDs that already have responses
+    existing_task_ids = {r["task_uuid"] for r in existing_responses}
+    
+    # Filter tasks_to_evaluate to only include tasks not yet evaluated
+    return [(task_id, task) for task_id, task in tasks_to_evaluate 
+            if task_id not in existing_task_ids]
+
+# For each model, get list of tasks needing evaluation
+tasks_for_deepseek = get_tasks_needing_evaluation(
+    results["deepseek"]["responses"], 
+    tasks_to_evaluate
+)
+tasks_for_original = get_tasks_needing_evaluation(
+    results["original"]["responses"], 
+    tasks_to_evaluate
+)
+tasks_for_forced = get_tasks_needing_evaluation(
+    results["original_with_thinking_tokens"]["responses"], 
+    tasks_to_evaluate
+)
+
+print(f"\nTasks needing evaluation:")
+print(f"Deepseek model: {len(tasks_for_deepseek)} tasks")
+print(f"Original model: {len(tasks_for_original)} tasks")
+print(f"Forced thinking: {len(tasks_for_forced)} tasks")
+
+if tasks_for_deepseek:
+    print("\nGenerating deepseek model responses...")
+    for i, (task_id, task) in enumerate(tqdm(tasks_for_deepseek)):
         expected_answer = task["answer-without-reasoning"]
-        deepseek_response, deepseek_num_tokens = generate_thinking_model_response(deepseek_model, deepseek_tokenizer, task)
+        deepseek_response, deepseek_num_tokens = generate_thinking_model_response(
+            deepseek_model, 
+            deepseek_tokenizer, 
+            task
+        )
         
         # Store results without evaluation
         results["deepseek"]["total"] += 1
@@ -658,15 +695,18 @@ else:
         # Save partial results
         if (i + 1) % save_every_n_tasks == 0:
             save_results(results, deepseek_model_name, original_model_name)
-
-if len(results["original"]["responses"]) > 0:
-    print("Skipping original model generation - results already exist")
 else:
-    print("Generating original model responses...")
-    models_with_new_results.append("original")
-    for i, (task_id, task) in enumerate(tqdm(tasks_to_evaluate)):
+    print("\nNo new tasks for deepseek model")
+
+if tasks_for_original:
+    print("\nGenerating original model responses...")
+    for i, (task_id, task) in enumerate(tqdm(tasks_for_original)):
         expected_answer = task["answer-without-reasoning"]
-        response, num_tokens = generate_original_model_response(original_model, original_tokenizer, task)
+        response, num_tokens = generate_original_model_response(
+            original_model, 
+            original_tokenizer, 
+            task
+        )
         
         # Store results without evaluation
         results["original"]["total"] += 1
@@ -682,13 +722,12 @@ else:
         # Save partial results
         if (i + 1) % save_every_n_tasks == 0:
             save_results(results, deepseek_model_name, original_model_name)
-
-if len(results["original_with_thinking_tokens"]["responses"]) > 0:
-    print("Skipping forced thinking generation - results already exist")
 else:
+    print("\nNo new tasks for original model")
+
+if tasks_for_forced:
     print("\nGenerating original model responses with forced thinking tokens...")
-    models_with_new_results.append("original_with_thinking_tokens")
-    for i, (task_id, task) in enumerate(tqdm(tasks_to_evaluate)):
+    for i, (task_id, task) in enumerate(tqdm(tasks_for_forced)):
         expected_answer = task["answer-without-reasoning"]
         response, num_tokens, forced_tokens_info = generate_thinking_model_response_with_forcing(
             original_model, 
@@ -696,7 +735,7 @@ else:
             task
         )
 
-        print(f"### Task {task_id}")
+        print(f"\n### Task {task_id}")
         print(f"Generated response: `{response}`")
         print(f"Expected answer: `{expected_answer}`")
         print("-" * 80)
@@ -716,48 +755,33 @@ else:
         # Save partial results
         if (i + 1) % save_every_n_tasks == 0:
             save_results(results, deepseek_model_name, original_model_name)
-
-# %% Evaluate all responses
-print("\nEvaluating all responses...")
-
-# Check if we should evaluate
-should_evaluate = overwrite_evaluation_existing_results
-if not should_evaluate:
-    # Check if any responses need evaluation
-    for model_name, model_results in results.items():
-        if model_name in models_with_new_results:
-            should_evaluate = True
-            break
-
-        for response_data in model_results["responses"]:
-            if response_data["is_correct"] is None:
-                should_evaluate = True
-                break
-
-        if should_evaluate:
-            break
-
-if not should_evaluate:
-    print("Skipping evaluation - results already exist and overwrite_evaluation_existing_results=False")
 else:
-    # Evaluate each model's responses
-    for model_name, model_results in results.items():
-        print(f"\nEvaluating {model_name} responses...")
-        for response_data in tqdm(model_results["responses"]):
-            # Only evaluate if overwriting or not yet evaluated
-            if overwrite_evaluation_existing_results or \
-                model_name in models_with_new_results or \
-                response_data["is_correct"] is None:
+    print("\nNo new tasks for forced thinking")
 
-                is_correct = evaluate_answer(
-                    response_data["model_response"], 
-                    response_data["correct_answer"], 
-                    model_name
-                )
-                response_data["is_correct"] = is_correct
+# %% Evaluate responses
+print("\nEvaluating responses...")
+
+# Get list of responses needing evaluation
+responses_to_evaluate = []
+for model_name, model_results in results.items():
+    for response_data in model_results["responses"]:
+        if response_data["is_correct"] is None or overwrite_evaluation_existing_results:
+            responses_to_evaluate.append((model_name, response_data))
+
+if responses_to_evaluate:
+    print(f"Evaluating {len(responses_to_evaluate)} responses...")
+    for model_name, response_data in tqdm(responses_to_evaluate):
+        is_correct = evaluate_answer(
+            response_data["model_response"],
+            response_data["correct_answer"],
+            model_name
+        )
+        response_data["is_correct"] = is_correct
 
     # Save results after evaluation
     save_results(results, deepseek_model_name, original_model_name)
+else:
+    print("No responses need evaluation")
 
 # %% Reset correctness counters
 for model_name, model_results in results.items():
