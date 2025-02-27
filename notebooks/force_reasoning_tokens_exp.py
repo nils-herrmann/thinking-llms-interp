@@ -504,18 +504,31 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
         return_tensors="pt"
     ).to(deepseek_model.device)
     
-    # Generate response token by token
+    # Initialize past key values for both models
+    with torch.no_grad():
+        # Get initial past key values for original model
+        outputs = model(input_ids, use_cache=True)
+        past_key_values = outputs.past_key_values
+        next_token_logits = outputs.logits[0, -1, :]
+
+        # Get initial past key values for deepseek model
+        deepseek_outputs = deepseek_model(deepseek_input_ids, use_cache=True)
+        deepseek_past_key_values = deepseek_outputs.past_key_values
+        deepseek_next_token_logits = deepseek_outputs.logits[0, -1, :]
+
+    # Initialize generated sequences
     generated_ids = input_ids.clone()
+    attention_mask = torch.ones_like(input_ids)
+    deepseek_attention_mask = torch.ones_like(deepseek_input_ids)
 
     for token_pos in range(max_tokens_forced):
-        # Get next token distribution from original model
+        # Get next token distribution from original model using cached values
         with torch.no_grad():
-            outputs = model(generated_ids)
-            next_token_logits = outputs.logits[0, -1, :]
+            # Get next token from original model using past key values
+            original_probs = torch.softmax(next_token_logits, dim=0)
             original_next_token_id = torch.argmax(next_token_logits).item()
 
             # Get top k tokens and their probabilities from original model
-            original_probs = torch.softmax(next_token_logits, dim=0)
             top_probs, top_indices = torch.topk(original_probs, top_k_for_checking_eos)
 
             # print("\nTop 10 original model predictions:")
@@ -526,7 +539,6 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
             # Check if EOS token is in top k predictions
             if tokenizer.eos_token_id in top_indices:
                 print("EOS token found in top k predictions - ending generation")
-                generated_ids = torch.cat([generated_ids, torch.tensor([[tokenizer.eos_token_id]]).to(model.device)], dim=1)
                 break
 
             # Create a temporary tensor with the next token to check completion conditions
@@ -538,7 +550,6 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
                 answer_pos = response_so_far_with_original_token.find("Answer: ") + len("Answer: ")
                 if "\n" in response_so_far_with_original_token[answer_pos:]:
                     print("Answer found - ending generation")
-                    generated_ids = torch.cat([generated_ids, torch.tensor([[original_next_token_id]]).to(model.device)], dim=1)
                     break
 
             original_next_token = tokenizer.decode(original_next_token_id, skip_special_tokens=False)
@@ -555,10 +566,8 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
         
         forced_token = False
         if check_forcing:
-            # Get deepseek model's top-p predictions
+            # Get deepseek model's top-p predictions using cached values
             with torch.no_grad():
-                deepseek_outputs = deepseek_model(deepseek_input_ids)
-                deepseek_next_token_logits = deepseek_outputs.logits[0, -1, :]
                 deepseek_probs = torch.softmax(deepseek_next_token_logits, dim=0)
                 
                 # Sort probabilities in descending order
@@ -566,7 +575,7 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
                 cumsum_probs = torch.cumsum(sorted_probs, dim=0)
                 # Find indices where cumsum is less than top_p
                 nucleus_mask = cumsum_probs <= top_p_predictions
-                # Include the first probability after top_p to ensure we don't cut off mid-word
+                # Include the first probability after top_p
                 if not nucleus_mask.any():
                     nucleus_mask[0] = True
                 else:
@@ -585,7 +594,6 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
                     # Only force if it's different from what the original model would do
                     if deepseek_next_token != original_next_token:
                         # Find the probability the original model assigns to the forced token
-                        # First find the token ID in the original model's vocabulary
                         forced_token_id = tokenizer.encode(deepseek_next_token, add_special_tokens=False)[0]
                         forced_token_prob = original_probs[forced_token_id].item()
                         
@@ -595,8 +603,8 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
                             "forced_token": deepseek_next_token,
                             "position": token_pos,
                             "original_next_token": original_next_token,
-                            "deepseek_prediction_rank": pred_idx + 1,  # 1-based rank
-                            "deepseek_prediction_probability": torch.softmax(deepseek_next_token_logits, dim=0)[deepseek_next_token_id].item(),
+                            "deepseek_prediction_rank": pred_idx + 1,
+                            "deepseek_prediction_probability": deepseek_probs[deepseek_next_token_id].item(),
                             "original_model_forced_token_prob": forced_token_prob,
                             "original_model_original_token_prob": original_token_prob
                         })
@@ -614,17 +622,41 @@ def generate_thinking_model_response_with_forcing(model, tokenizer, task):
                         print(f"Original model probability of its preferred token: {original_token_prob:.4f}")
                         print("-" * 80)
                         
-                        next_token_id = torch.tensor([[deepseek_next_token_id]]).to(model.device)
-                        generated_ids = torch.cat([generated_ids, next_token_id], dim=1)
-                        deepseek_input_ids = torch.cat([deepseek_input_ids, next_token_id], dim=1)
+                        next_token_id = torch.tensor([[forced_token_id]]).to(model.device)
                         forced_token = True
                         break
-        
+
         if not forced_token:
-            # If no forcing occurred, continue with original model's prediction
+            # If no forcing occurred, use original model's prediction
             next_token_id = torch.tensor([[original_next_token_id]]).to(model.device)
-            generated_ids = torch.cat([generated_ids, next_token_id], dim=1)
-            deepseek_input_ids = torch.cat([deepseek_input_ids, next_token_id], dim=1)
+
+        # Update generated sequences and attention masks
+        generated_ids = torch.cat([generated_ids, next_token_id], dim=1)
+        attention_mask = torch.cat([attention_mask, torch.ones_like(next_token_id)], dim=1)
+        deepseek_input_ids = torch.cat([deepseek_input_ids, next_token_id], dim=1)
+        deepseek_attention_mask = torch.cat([deepseek_attention_mask, torch.ones_like(next_token_id)], dim=1)
+
+        # Update past key values for both models
+        with torch.no_grad():
+            # Update original model's cache
+            outputs = model(
+                next_token_id,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True
+            )
+            past_key_values = outputs.past_key_values
+            next_token_logits = outputs.logits[0, -1, :]
+
+            # Update deepseek model's cache
+            deepseek_outputs = deepseek_model(
+                next_token_id,
+                attention_mask=deepseek_attention_mask,
+                past_key_values=deepseek_past_key_values,
+                use_cache=True
+            )
+            deepseek_past_key_values = deepseek_outputs.past_key_values
+            deepseek_next_token_logits = deepseek_outputs.logits[0, -1, :]
 
     # Extract the generated response (excluding the prompt)
     response_ids = generated_ids[0, input_ids.shape[1]:]
