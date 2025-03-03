@@ -834,22 +834,82 @@ for model_name, model_results in results.items():
 
 # %%
 
+# Get sets of correctly answered tasks for each model
 deepseek_correct = {r["task_uuid"] for r in results["deepseek"]["responses"] if r["is_correct"]}
 base_correct = {r["task_uuid"] for r in results["original"]["responses"] if r["is_correct"]}
 forced_correct = {r["task_uuid"] for r in results["original_with_thinking_tokens"]["responses"] if r["is_correct"]}
 
-# Print the task ids that deepseek got correct, base didn't get correct, and forced thinking got correct
-deepseek_only_with_forced = deepseek_correct - base_correct & forced_correct
-print("\nTasks that deepseek got correct, base got wrong, and forced thinking got correct:")
-print(f"Found {len(deepseek_only_with_forced)} tasks")
-for task_id in deepseek_only_with_forced:
-    print(f"\nTask ID: {task_id}")
-    
-# Print the task ids that deepseek got correct, base didn't get correct, and forced thinking didn't get correct
-deepseek_only_without_forced = deepseek_correct - base_correct - forced_correct
-print("\nTasks that deepseek got correct, base got wrong, and forced thinking got wrong:")
-print(f"Found {len(deepseek_only_without_forced)} tasks")
-for task_id in deepseek_only_without_forced:
-    print(f"\nTask ID: {task_id}")
+# Get all task IDs
+all_tasks = {r["task_uuid"] for r in results["deepseek"]["responses"]}
 
+# Create sets for incorrect answers
+deepseek_wrong = all_tasks - deepseek_correct
+base_wrong = all_tasks - base_correct
+forced_wrong = all_tasks - forced_correct
 
+show_task_ids = False
+
+print("Analysis of all possible combinations:")
+print("True = correct, False = wrong\n")
+
+# All 8 possible combinations
+combinations = {
+    (True, True, True): deepseek_correct & base_correct & forced_correct,
+    (True, True, False): deepseek_correct & base_correct & forced_wrong,
+    (True, False, True): deepseek_correct & base_wrong & forced_correct,
+    (True, False, False): deepseek_correct & base_wrong & forced_wrong,
+    (False, True, True): deepseek_wrong & base_correct & forced_correct,
+    (False, True, False): deepseek_wrong & base_correct & forced_wrong,
+    (False, False, True): deepseek_wrong & base_wrong & forced_correct,
+    (False, False, False): deepseek_wrong & base_wrong & forced_wrong
+}
+
+# Print results in a formatted table
+if show_task_ids:
+    print(f"{'Deep':5} | {'Base':5} | {'Force':5} | {'Count':6} | {'Task IDs'}")
+    print("-" * 70)
+else:
+    print(f"{'Deep':5} | {'Base':5} | {'Force':5} | {'Count':6}")
+    print("-" * 30)
+
+for (d, b, f), task_set in combinations.items():
+    if show_task_ids:
+        print(f"{str(d):5} | {str(b):5} | {str(f):5} | {len(task_set):6d} | {task_set if task_set else 'None'}")
+    else:
+        print(f"{str(d):5} | {str(b):5} | {str(f):5} | {len(task_set):6d}")
+
+# Verify that all tasks are accounted for
+total_from_combinations = sum(len(s) for s in combinations.values())
+print(f"\nVerification - Total tasks: {len(all_tasks)}")
+print(f"Sum of all combinations: {total_from_combinations}")
+assert total_from_combinations == len(all_tasks), "Error: Not all tasks accounted for!"
+
+# Print some interesting insights
+print("\nKey insights:")
+print(f"Tasks all models got correct: {len(combinations[(True, True, True)])}")
+print(f"Tasks all models got wrong: {len(combinations[(False, False, False)])}")
+
+deepseek_correct_tasks = combinations[(True, True, True)] | combinations[(True, True, False)] | combinations[(True, False, True)] | combinations[(True, False, False)]
+print(f"\nTasks Deepseek got correct: {len(deepseek_correct_tasks)} ({len(deepseek_correct_tasks) / len(all_tasks):.2%})")
+
+base_correct_tasks = combinations[(False, True, True)] | combinations[(False, True, False)] | combinations[(True, True, True)] | combinations[(True, True, False)]
+print(f"Tasks Base got correct: {len(base_correct_tasks)} ({len(base_correct_tasks) / len(all_tasks):.2%})")
+
+forced_correct_tasks = combinations[(False, False, True)] | combinations[(True, False, True)] | combinations[(False, True, True)] | combinations[(True, True, True)]
+print(f"Tasks Forced got correct: {len(forced_correct_tasks)} ({len(forced_correct_tasks) / len(all_tasks):.2%})")
+
+forced_helped_tasks = combinations[(True, False, True)] | combinations[(False, False, True)]
+print(f"\nTasks where forced thinking helped: {len(combinations[(True, False, True)])} + {len(combinations[(False, False, True)])} = {len(forced_helped_tasks)}")
+print(f"Task IDs: {forced_helped_tasks}")
+
+forced_hurt_tasks = combinations[(True, True, False)] | combinations[(False, True, False)]
+print(f"\nTasks where forced thinking hurt: {len(combinations[(True, True, False)])} + {len(combinations[(False, True, False)])} = {len(forced_hurt_tasks)}")
+print(f"Task IDs: {forced_hurt_tasks}")
+
+forced_did_not_help_tasks = combinations[(True, False, False)] | combinations[(False, False, False)]
+print(f"\nTasks where forced thinking did not help: {len(combinations[(True, False, False)])} + {len(combinations[(False, False, False)])} = {len(forced_did_not_help_tasks)}")
+print(f"Task IDs: {forced_did_not_help_tasks}")
+
+forced_did_not_hurt_tasks = combinations[(False, True, True)] | combinations[(True, True, True)]
+print(f"\nTasks where forced thinking did not hurt: {len(combinations[(False, True, True)])} + {len(combinations[(True, True, True)])} = {len(forced_did_not_hurt_tasks)}")
+print(f"Task IDs: {forced_did_not_hurt_tasks}")
