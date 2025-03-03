@@ -831,3 +831,25 @@ for model_name, model_results in results.items():
     accuracy = model_results["correct"] / model_results["total"]
     print(f"\n{model_name.capitalize()} Model Results:")
     print(f"Overall Accuracy: {accuracy:.2%} ({model_results['correct']}/{model_results['total']})")
+
+# %%
+
+deepseek_correct = {r["task_uuid"] for r in results["deepseek"]["responses"] if r["is_correct"]}
+base_correct = {r["task_uuid"] for r in results["original"]["responses"] if r["is_correct"]}
+forced_correct = {r["task_uuid"] for r in results["original_with_thinking_tokens"]["responses"] if r["is_correct"]}
+
+# Print the task ids that deepseek got correct, base didn't get correct, and forced thinking got correct
+deepseek_only_with_forced = deepseek_correct - base_correct & forced_correct
+print("\nTasks that deepseek got correct, base got wrong, and forced thinking got correct:")
+print(f"Found {len(deepseek_only_with_forced)} tasks")
+for task_id in deepseek_only_with_forced:
+    print(f"\nTask ID: {task_id}")
+    
+# Print the task ids that deepseek got correct, base didn't get correct, and forced thinking didn't get correct
+deepseek_only_without_forced = deepseek_correct - base_correct - forced_correct
+print("\nTasks that deepseek got correct, base got wrong, and forced thinking got wrong:")
+print(f"Found {len(deepseek_only_without_forced)} tasks")
+for task_id in deepseek_only_without_forced:
+    print(f"\nTask ID: {task_id}")
+
+
