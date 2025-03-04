@@ -332,7 +332,7 @@ def generate_thinking_model_response(model, tokenizer, task):
 
 
 # %%
-def evaluate_answer(raw_response, raw_correct_answer, model_name):
+def evaluate_answer(task_uuid, raw_response, raw_correct_answer, model_name):
     """
     Use GPT-4 to evaluate if the model's response contains the correct answer.
     
@@ -346,6 +346,7 @@ def evaluate_answer(raw_response, raw_correct_answer, model_name):
         where is_correct is True if the response is deemed correct, False otherwise
         and explanation is the LLM's explanation or None if parsing failed
     """
+    task = tasks_dataset["problems-by-qid"][task_uuid]
     # Construct the prompt for GPT-4
     evaluation_prompt = f"""Please evaluate if the following response arrives at the correct answer.
 
@@ -950,6 +951,7 @@ if responses_to_evaluate:
     print(f"Evaluating {len(responses_to_evaluate)} responses...")
     for model_name, response_data in tqdm(responses_to_evaluate):
         is_correct, explanation = evaluate_answer(
+            response_data["task_uuid"],
             response_data["model_response"],
             response_data["correct_answer"],
             model_name
