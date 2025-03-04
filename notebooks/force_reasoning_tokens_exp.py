@@ -2,6 +2,9 @@
 import os
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
+import dotenv
+dotenv.load_dotenv(".env")
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 import json
@@ -11,6 +14,11 @@ import pickle
 import matplotlib.pyplot as plt
 from IPython.display import HTML, display
 from tiny_dashboard.visualization_utils import activation_visualization
+import openai
+from openai import OpenAI
+
+# Initialize OpenAI client
+client = OpenAI()
 
 # %% Set model names and parameters
 deepseek_model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
@@ -326,55 +334,68 @@ def generate_thinking_model_response(model, tokenizer, task):
 # %%
 def evaluate_answer(raw_response, raw_correct_answer, model_name):
     """
-    Compare the model's response to the correct answer.
-    Returns True if the response contains the correct answer.
+    Use GPT-4 to evaluate if the model's response contains the correct answer.
+    
+    Args:
+        raw_response: The model's complete response
+        raw_correct_answer: The expected correct answer
+        model_name: Name of the model being evaluated (for logging)
+    
+    Returns:
+        tuple: (is_correct: bool, explanation: str | None)
+        where is_correct is True if the response is deemed correct, False otherwise
+        and explanation is the LLM's explanation or None if parsing failed
     """
-    # Convert both to lowercase for case-insensitive comparison
-    response = raw_response.lower()
-    correct_answer = str(raw_correct_answer).lower()  # Ensure correct_answer is a string
+    # Construct the prompt for GPT-4
+    evaluation_prompt = f"""Please evaluate if the following response arrives at the correct answer.
 
-    # Remove LaTeX from both
-    stuff_to_remove = ["\\boxed", "\\text", "\\frac"]
-    for stuff in stuff_to_remove:
-        response = response.replace(stuff, "")
-        correct_answer = correct_answer.replace(stuff, "")
+Question: `{task["q-str"]}`
+Ground truth answer: `{raw_correct_answer}`
+Response to evaluate: `{raw_response}`
 
-    # Clean up correct answer
-    correct_answer = ''.join(c for c in correct_answer if c.isalnum() or c.isspace())
-    correct_answer = correct_answer.strip()
-    
-    for prefix in answer_prefixes:
-        if prefix in response:
-            # Get everything after the prefix
-            response = response.split(prefix)[-1].strip()
+Please provide your evaluation in the following format:
+<explanation>Your detailed explanation of whether the response arrives at the correct answer</explanation>
+<correct>YES/NO/UNKNOWN</correct>"""
 
-            # Clean up the response - remove common punctuation and whitespace
-            response = ''.join(c for c in response if c.isalnum() or c.isspace())
-            response = response.strip()
-
-            # Check if they match exactly
-            is_correct = correct_answer in response
-            return is_correct
-
-    print(f"No answer prefix found in response of {model_name}. Expected answer: `{correct_answer}`\nResponse:\n`{raw_response}`")    
-    
-    return raw_correct_answer in raw_response
-
-assert evaluate_answer("""Let's think step by step about this question:                   
-                                                                                                                                                                                                                   
-Step 1: Determine the total amount of the items before sales tax, which is given as $150.                                                                                                                          
-                                                    
-Step 2: Calculate the sales tax amount. To do this, I will multiply the total amount of the items by the sales tax rate, which is 8%. So, I will calculate 8% of $150.
-                                                                                                         
-Step 3: Convert the sales tax rate to a decimal by dividing it by 100, which gives me 0.08.
-
-Step 4: Multiply the total amount of the items, $150, by the sales tax rate, 0.08, to find the sales tax amount: $150 * 0.08 = $12.
-
-Step 5: Add the sales tax amount to the total amount of the items before sales tax to find the total amount Pauline will spend: $150 + $12 = $162.
-
-I have now calculated the total amount, including sales tax, that Pauline will spend on all the items. I can now provide my final answer:
-
-Answer: $162""", "162", "original")
+    try:
+        # Call GPT-4 for evaluation
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a precise mathematical answer evaluator. Your task is to determine if a given response arrives at the correct answer, regardless of the reasoning path taken."},
+                {"role": "user", "content": evaluation_prompt}
+            ],
+            temperature=0
+        )
+        
+        # Extract the evaluation result
+        evaluation = response.choices[0].message.content
+        
+        # Parse the XML-like tags
+        explanation_start = evaluation.find("<explanation>") + len("<explanation>")
+        explanation_end = evaluation.find("</explanation>")
+        correct_start = evaluation.find("<correct>") + len("<correct>")
+        correct_end = evaluation.find("</correct>")
+        
+        if correct_start == -1 or correct_end == -1:
+            print(f"Error parsing GPT-4 response for {model_name}. Response: {evaluation}")
+            return False, None
+            
+        explanation = evaluation[explanation_start:explanation_end].strip()
+        correct_str = evaluation[correct_start:correct_end].strip().upper()
+        
+        # Map the response to boolean
+        if correct_str == "YES":
+            return True, explanation
+        elif correct_str == "NO":
+            return False, explanation
+        else:
+            print(f"Unclear evaluation from GPT-4 for {model_name}. Response: {evaluation}")
+            return False, explanation
+            
+    except Exception as e:
+        print(f"Error during GPT-4 evaluation for {model_name}: {str(e)}")
+        return False, None
 
 # %%
 
@@ -463,10 +484,10 @@ results = load_results()
 all_tasks = list(tasks_dataset["problems-by-qid"].items())
 
 # tasks_to_evaluate = [t for t in all_tasks if t[0] in tasks_where_forced_thinking_did_not_help]
-# tasks_to_evaluate = [t for t in all_tasks if t[0] == "math_train_prealgebra_298"]
+tasks_to_evaluate = [t for t in all_tasks if t[0] == "math_train_prealgebra_298"]
 
 # randomly sample tasks
-tasks_to_evaluate = random.sample(all_tasks, num_tasks)
+# tasks_to_evaluate = random.sample(all_tasks, num_tasks)
 
 # %% Create modified prompting function that forces the thinking tokens
 
@@ -843,6 +864,7 @@ if tasks_for_deepseek:
             "correct_answer": expected_answer,
             "model_response": deepseek_response,
             "is_correct": None,  # Will be evaluated later
+            "is_correct_explanation": None,  # Will be evaluated later
             "num_tokens": deepseek_num_tokens
         })
         
@@ -870,6 +892,7 @@ if tasks_for_original:
             "correct_answer": expected_answer,
             "model_response": response,
             "is_correct": None,  # Will be evaluated later
+            "is_correct_explanation": None,  # Will be evaluated later
             "num_tokens": num_tokens
         })
         
@@ -902,6 +925,7 @@ if tasks_for_forced:
             "correct_answer": expected_answer,
             "model_response": response,
             "is_correct": None,  # Will be evaluated later
+            "is_correct_explanation": None,  # Will be evaluated later
             "num_tokens": num_tokens,
             "forced_tokens_info": forced_tokens_info
         })
@@ -925,12 +949,13 @@ for model_name, model_results in results.items():
 if responses_to_evaluate:
     print(f"Evaluating {len(responses_to_evaluate)} responses...")
     for model_name, response_data in tqdm(responses_to_evaluate):
-        is_correct = evaluate_answer(
+        is_correct, explanation = evaluate_answer(
             response_data["model_response"],
             response_data["correct_answer"],
             model_name
         )
         response_data["is_correct"] = is_correct
+        response_data["is_correct_explanation"] = explanation
 
     # Save results after evaluation
     save_results(results, deepseek_model_name, original_model_name)
