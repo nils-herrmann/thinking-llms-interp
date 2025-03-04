@@ -485,10 +485,10 @@ results = load_results()
 all_tasks = list(tasks_dataset["problems-by-qid"].items())
 
 # tasks_to_evaluate = [t for t in all_tasks if t[0] in tasks_where_forced_thinking_did_not_help]
-tasks_to_evaluate = [t for t in all_tasks if t[0] == "math_train_prealgebra_298"]
+# tasks_to_evaluate = [t for t in all_tasks if t[0] == "math_train_prealgebra_298"]
 
 # randomly sample tasks
-# tasks_to_evaluate = random.sample(all_tasks, num_tasks)
+tasks_to_evaluate = random.sample(all_tasks, num_tasks)
 
 # %% Create modified prompting function that forces the thinking tokens
 
