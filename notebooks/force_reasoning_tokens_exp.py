@@ -444,8 +444,8 @@ def load_results():
             if "original" not in results:
                 results["original"] = {"correct": 0, "total": 0, "responses": []}
             
-            # if "original_with_thinking_tokens" not in results:
-            results["original_with_thinking_tokens"] = {"correct": 0, "total": 0, "responses": []}
+            if "original_with_thinking_tokens" not in results:
+                results["original_with_thinking_tokens"] = {"correct": 0, "total": 0, "responses": []}
 
             return results
     except FileNotFoundError:
