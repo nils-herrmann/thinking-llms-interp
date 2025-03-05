@@ -50,7 +50,7 @@ answer_prefixes = ["answer:", "the answer is"]  # Prefixes to look for when extr
 model_dtype = torch.float16  # Data type for model weights
 device_map = "auto"  # Device placement strategy
 
-overwrite_evaluation_existing_results = True
+overwrite_evaluation_existing_results = False
 
 tasks_where_forced_thinking_did_not_help = {'math_test_intermediate_algebra_554', 'math_test_precalculus_6', 'math_train_geometry_54', 'math_train_intermediate_algebra_393', 'math_train_precalculus_592', 'math_train_intermediate_algebra_433', 'math_train_precalculus_657', 'math_test_algebra_950', 'math_test_algebra_67', 'math_train_counting_and_probability_25', 'math_test_prealgebra_476', 'math_test_intermediate_algebra_582', 'math_train_geometry_539', 'math_test_precalculus_490', 'math_test_prealgebra_341', 'math_test_geometry_52', 'math_train_intermediate_algebra_281', 'math_test_geometry_130', 'math_train_intermediate_algebra_237', 'math_test_intermediate_algebra_879', 'math_test_intermediate_algebra_23', 'math_test_counting_and_probability_48', 'math_train_geometry_304', 'math_test_intermediate_algebra_696', 'math_train_precalculus_631', 'math_test_intermediate_algebra_100', 'math_train_number_theory_538', 'math_train_intermediate_algebra_620', 'math_train_intermediate_algebra_400', 'math_train_intermediate_algebra_687', 'math_train_geometry_220', 'math_test_geometry_214', 'math_train_number_theory_639', 'math_train_intermediate_algebra_823', 'math_train_precalculus_283', 'math_train_intermediate_algebra_24', 'math_train_precalculus_380', 'math_train_counting_and_probability_21', 'math_train_geometry_510', 'math_test_counting_and_probability_411', 'math_train_counting_and_probability_78', 'math_train_geometry_611', 'math_test_geometry_292', 'math_test_intermediate_algebra_494', 'math_train_precalculus_549', 'math_test_geometry_66', 'math_test_prealgebra_577', 'math_test_intermediate_algebra_455', 'math_test_intermediate_algebra_426', 'math_train_number_theory_656', 'math_train_precalculus_467', 'math_test_precalculus_17', 'math_test_counting_and_probability_192', 'math_train_geometry_849', 'math_train_intermediate_algebra_481', 'math_train_intermediate_algebra_827', 'math_train_geometry_788', 'math_train_geometry_493', 'math_train_counting_and_probability_714', 'math_train_intermediate_algebra_140', 'math_test_precalculus_417', 'math_train_prealgebra_477', 'math_test_geometry_11', 'math_train_intermediate_algebra_1253', 'math_train_geometry_697', 'math_train_prealgebra_514', 'math_train_precalculus_504', 'math_train_geometry_823', 'math_train_precalculus_84', 'math_test_algebra_932', 'math_test_intermediate_algebra_211', 'math_test_precalculus_189', 'math_test_precalculus_357', 'math_train_geometry_309', 'math_test_prealgebra_532', 'math_train_counting_and_probability_346', 'math_test_algebra_867', 'math_test_number_theory_167', 'math_train_intermediate_algebra_1231', 'math_test_precalculus_197', 'math_train_counting_and_probability_260', 'math_test_intermediate_algebra_122', 'math_test_number_theory_502', 'math_train_number_theory_606', 'math_train_intermediate_algebra_706', 'math_test_intermediate_algebra_356', 'math_train_intermediate_algebra_238', 'math_train_geometry_365', 'math_test_geometry_119', 'math_train_intermediate_algebra_213', 'math_train_precalculus_606', 'math_train_algebra_1513', 'math_train_precalculus_92', 'math_train_precalculus_112', 'math_train_geometry_109', 'math_test_intermediate_algebra_607', 'math_train_geometry_500', 'math_train_intermediate_algebra_542', 'math_train_geometry_496', 'math_train_intermediate_algebra_976', 'math_train_algebra_1415', 'math_train_intermediate_algebra_330', 'math_test_number_theory_84', 'math_train_precalculus_45', 'math_train_intermediate_algebra_891', 'math_train_geometry_156', 'math_train_counting_and_probability_366', 'math_train_precalculus_535', 'math_train_counting_and_probability_563', 'math_train_geometry_236', 'math_train_algebra_51', 'math_test_geometry_458', 'math_train_intermediate_algebra_900', 'math_test_prealgebra_581', 'math_train_number_theory_304', 'math_train_counting_and_probability_490', 'math_test_intermediate_algebra_570', 'math_train_precalculus_441', 'math_test_algebra_978', 'math_train_precalculus_311', 'math_test_counting_and_probability_370', 'math_test_prealgebra_767', 'math_train_prealgebra_170', 'math_test_geometry_388', 'math_test_intermediate_algebra_569', 'math_test_precalculus_187', 'math_train_precalculus_186', 'math_train_intermediate_algebra_906', 'math_train_prealgebra_981', 'math_test_intermediate_algebra_239', 'math_train_counting_and_probability_253', 'math_test_geometry_172', 'math_train_precalculus_131', 'math_test_intermediate_algebra_52', 'math_train_algebra_1137', 'math_train_intermediate_algebra_1031', 'math_train_geometry_432', 'math_test_precalculus_196', 'math_test_prealgebra_821', 'math_train_number_theory_180', 'math_train_algebra_261'}
 
@@ -1183,8 +1183,8 @@ def calculate_kl_divergence(p_logits, q_logits):
 # %%
 
 # Grab one of the tasks where forced thinking did not help but it should have, and analyze its KL div heatmap
-task_id = random.choice(list(combinations[(True, True, False)]))
-# task_id = "math_train_prealgebra_298"
+# task_id = random.choice(list(combinations[(True, True, False)]))
+task_id = "tasks_where_forced_thinking_hurt"
 
 metric = "prob" # "prob" or "kl_div"
 
@@ -1241,13 +1241,14 @@ for forced_token_info in response_data["forced_tokens_info"]:
     for token, prob in zip(top_5_tokens, top_5_tokens_probs):
         print(f" `{deepseek_tokenizer.decode([token])}` ({prob:.2%})")
     
-# for pos in range(1, response_input_ids.shape[1]):
-#     pos = pos - 1 # Shift by one to the left to account for the fact that we don't have next token logits for first token
-#     top_5_tokens = torch.argsort(deepseek_logits[pos], descending=True)[:5]
-#     top_5_tokens_probs = torch.nn.functional.softmax(deepseek_logits[pos], dim=-1)[top_5_tokens]
-#     print(f"Top 5 tokens with highest probability for the deepseek model in position {pos}:")
-#     for token, prob in zip(top_5_tokens, top_5_tokens_probs):
-#         print(f" `{deepseek_tokenizer.decode([token])}` ({prob:.2%})")
+print("-" * 70)
+for pos in range(1, response_input_ids.shape[1]):
+    pos = pos - 1 # Shift by one to the left to account for the fact that we don't have next token logits for first token
+    top_5_tokens = torch.argsort(deepseek_logits[pos], descending=True)[:5]
+    top_5_tokens_probs = torch.nn.functional.softmax(deepseek_logits[pos], dim=-1)[top_5_tokens]
+    print(f"Top 5 tokens with highest probability for the deepseek model in position {pos}:")
+    for token, prob in zip(top_5_tokens, top_5_tokens_probs):
+        print(f" `{deepseek_tokenizer.decode([token])}` ({prob:.2%})")
 
 # Create heatmap visualization
 html = activation_visualization(
