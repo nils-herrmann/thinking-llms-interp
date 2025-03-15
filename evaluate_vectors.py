@@ -55,7 +55,7 @@ def get_thinking_activations(model, tokenizer, message_idx):
     return layer_outputs, thinking_process, response
 
 # %%
-model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"  # Can be changed to use different models
+model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Can be changed to use different models
 model, tokenizer, feature_vectors = load_model_and_vectors(model_name)
 
 # %% Get activations and response
@@ -79,21 +79,31 @@ print(response)
 print("\n================\n")
 
 # %%
-input_ids = tokenizer.apply_chat_template([eval_messages[data_idx]], add_generation_prompt=True, return_tensors="pt").to("cuda")
-output_ids = utils.custom_generate_with_projection_removal(
-    model,
-    tokenizer,
-    input_ids,
-    max_new_tokens=500,
-    label="backtracking",
-    feature_vectors=feature_vectors,
-    layers=list(range(25,40)),
-    coefficient=0.1,
-    steer_positive=True,
-    show_progress=True
-)
-response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-print(response)
-print("\n================\n")
+for t in ["positive", "negative"]:
+    for label, layers, coefficient in [
+        ("backtracking", [14], -1), 
+        ("adding-knowledge", [9], -1), 
+        ("example-testing", [12], 1), 
+        ("uncertainty-estimation", [10], 1)]:
+            
+            print(f"Label: {label}, Steer: {t}")
+            print(f"")
 
+            input_ids = tokenizer.apply_chat_template([eval_messages[data_idx]], add_generation_prompt=True, return_tensors="pt").to("cuda")
+            output_ids = utils.custom_generate_with_projection_removal(
+                model,
+                tokenizer,
+                input_ids,
+                max_new_tokens=200,
+                label=label,
+                feature_vectors=feature_vectors,
+                layers=layers,
+                coefficient=coefficient,
+                steer_positive=True if t == "positive" else False,
+                show_progress=True
+            )
+
+            response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            print(response)
+            print("\n================\n")
 # %%

@@ -1,4 +1,7 @@
 # %%
+import dotenv
+dotenv.load_dotenv(".env")
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from utils import chat
 import torch
@@ -88,7 +91,7 @@ def update_mean_vectors(mean_vectors, layer_outputs, label_positions, index):
     for label, positions in label_positions.items():
         for position in positions:
             start, end = position
-            vectors = layer_outputs[:, start-1:end].mean(dim=1)
+            vectors = layer_outputs[:, start-1:end-1].mean(dim=1)
             current_count = mean_vectors[label]['count']
             current_mean = mean_vectors[label]['mean']
             mean_vectors[label]['mean'] = current_mean + (vectors - current_mean) / (current_count + 1)
@@ -128,7 +131,13 @@ def process_single_message(message, tokenizer, model, mean_vectors, get_annotati
     }
 
 # %% Main execution
-model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"  # Can be changed to use different models
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B")
+args, _ = parser.parse_known_args()
+
+model_name = args.model
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 model = NNsight(model).to("cuda")
@@ -143,8 +152,8 @@ mean_vectors = defaultdict(lambda: {
 })
 
 # %%
-save_every = 10
-save_path = f"mean_vectors_{model_name.split('/')[-1].lower()}.pt"
+save_every = 1
+save_path = f"data/mean_vectors_{model_name.split('/')[-1].lower()}.pt"
 
 load_from_json = False
 responses_json_path = f"data/responses_{model_name.split('/')[-1].lower()}.json"
@@ -165,7 +174,6 @@ if load_from_json and os.path.exists(responses_json_path):
         if i % save_every == 0:
             save_dict = {k: {'mean': v['mean'], 'count': v['count']} for k, v in mean_vectors.items()}
             torch.save(save_dict, save_path)
-            print(f"Current mean_vectors: {mean_vectors.keys()}. Saved...")
 else:
     random.shuffle(messages)
     for i, message in tqdm(enumerate(messages), total=len(messages), desc="Processing problems"):
@@ -181,7 +189,6 @@ else:
             torch.save(save_dict, save_path)
             with open(responses_json_path, "w") as f:
                 json.dump(responses_data, f, indent=2)
-            print(f"Current mean_vectors: {mean_vectors.keys()}. Saved...")
 
 # Save final results
 with open(responses_json_path, "w") as f:
@@ -192,4 +199,6 @@ save_dict = {k: {'mean': v['mean'], 'count': v['count']} for k, v in mean_vector
 torch.save(save_dict, save_path)
 print("Saved final mean vectors")
 
+# %%
+torch.save(model.lm_head.weight.data.detach().cpu(), f"{model_name.split('/')[-1].lower()}_unembed.pt")
 # %%

@@ -34,9 +34,9 @@ def find_label_positions(annotated_response, original_text, tokenizer, label):
 
 def compute_kl_divergence_metric(logits):
     """Compute KL divergence between predicted distribution and detached version"""
-    probs = F.softmax(logits, dim=-1)
-    detached_probs = F.softmax(logits.detach(), dim=-1)
-    return F.kl_div(probs.log(), detached_probs, reduction='batchmean')
+    probs = F.log_softmax(logits, dim=-1)
+    detached_probs = F.log_softmax(logits.detach(), dim=-1)
+    return F.kl_div(probs, detached_probs, reduction='batchmean')
 
 def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, label_positions):
     input_ids = tokenizer(text, return_tensors="pt").input_ids.to("cuda")
@@ -53,7 +53,7 @@ def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, labe
         start, end = pos
 
         with model.trace() as tracer:
-            with tracer.invoke(input_ids[:, :start]) as invoker:
+            with tracer.invoke(input_ids[:, :end]) as invoker:
                 # Collect activations from each layer
                 for layer_idx in range(model.config.num_hidden_layers):
                     layer_activations.append(model.model.layers[layer_idx].output[0].save())
@@ -63,7 +63,7 @@ def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, labe
                 logits = model.lm_head.output.save()
                 
                 # Compute cross entropy metric for each labeled section
-                value = compute_kl_divergence_metric(logits[0, start-1])
+                value = compute_kl_divergence_metric(logits[0, start])
 
                 # Backward pass
                 value.backward()
@@ -71,14 +71,14 @@ def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, labe
         layer_activations = [layer_activations[i].value for i in range(model.config.num_hidden_layers)]
         layer_gradients = [layer_gradients[i].value for i in range(model.config.num_hidden_layers)]
 
-        mean_activation = mean_vectors_dict['overall']['mean'].to(torch.bfloat16).to("cuda")
+        feature_activation = mean_vectors_dict[label]['mean'].to(torch.bfloat16).to("cuda") - mean_vectors_dict['overall']['mean'].to(torch.bfloat16).to("cuda")
 
         for layer_idx in range(model.config.num_hidden_layers):
             # Get activations and gradients for the entire labeled section
-            activations = layer_activations[layer_idx][0, start-1:end]
-            gradients = layer_gradients[layer_idx][0, start-1:end]
+            activations = layer_activations[layer_idx][0, start-1:start]
+            gradients = layer_gradients[layer_idx][0, start-1:start]
             
-            effect = torch.einsum('sd,sd->s', (activations - mean_activation[layer_idx].unsqueeze(0)), gradients).mean().abs()
+            effect = torch.einsum('d,sd->s', feature_activation[layer_idx], gradients).mean()
             
             patching_effects[layer_idx] += effect.cpu().item()
         
@@ -87,78 +87,110 @@ def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, labe
     return patching_effects
 
 def plot_layer_effects(layer_effects, model_name):
-    plt.figure(figsize=(12, 8))
+    # Set up the figure with subplots
+    n_labels = sum(1 for label, effects in layer_effects.items() if effects)
+    fig, axes = plt.subplots(1, n_labels, figsize=(6*n_labels, 8), facecolor='white')
     
-    # Set style
-    plt.style.use('ggplot')
+    # Handle the case where there's only one subplot
+    if n_labels == 1:
+        axes = [axes]
     
     # Color scheme
     colors = ['#2E86C1', '#E67E22', '#27AE60', '#C0392B']
+    
+    # Get model ID for title
+    model_id = model_name.split('/')[-1]
+    
+    # Counter for valid labels
+    valid_label_idx = 0
     
     for (label, effects), color in zip(layer_effects.items(), colors):
         if not effects:  # Skip if no effects for this label
             continue
             
-        # Convert list of lists to numpy array
-        effects_array = np.array(effects)
+        # Get current axis
+        ax = axes[valid_label_idx]
+        ax.set_facecolor('white')
         
-        # Calculate mean across examples
+        effects_array = np.array(effects)
         mean_effects = np.mean(effects_array, axis=0)
         
         # Apply smoothing using convolution
-        window_size = 4
+        window_size = 4  # Increase coarseness by reducing window size
         kernel = np.ones(window_size) / window_size
         smoothed_effects = np.convolve(mean_effects, kernel, mode='valid')
         
-        # Adjust x-axis for smoothed data
         x = range(len(smoothed_effects))
-        
-        # Calculate standard deviation across examples
+
         std_effects = np.std(effects_array, axis=0)
         std_smoothed = np.convolve(std_effects, kernel, mode='valid')
         
-        plt.fill_between(x, 
+        ax.fill_between(x, 
                         smoothed_effects - std_smoothed,
                         smoothed_effects + std_smoothed,
                         alpha=0.2, 
                         color=color)
         
-        plt.plot(x, smoothed_effects, 
-                label=f"{label.replace('-', ' ').title()} (n={len(effects)})",
+        ax.plot(x, smoothed_effects, 
                 color=color,
                 linewidth=2.5,
                 marker='o',
                 markersize=4)
+        
+        # Set title and labels for each subplot
+        ax.set_title("{}".format(label.replace('-', ' ').title()), 
+                    fontsize=20, 
+                    pad=10, 
+                    color='black')
+        
+        ax.set_xlabel('Layer', fontsize=16, labelpad=10, color='black')
+        
+        # Only set y-label for the first subplot
+        if valid_label_idx == 0:
+            ax.set_ylabel('Mean KL-Divergence', fontsize=16, labelpad=10, color='black')
+        
+        ax.tick_params(axis='both', which='major', labelsize=14, colors='black')
+        
+        # Remove offset on x-axis
+        ax.margins(x=0)
+        
+        # Add box and grid with stronger visibility
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.5)  # Make the box lines thicker
+            spine.set_color('black')  # Set explicit color
+        
+        ax.spines['top'].set_visible(True)
+        ax.spines['right'].set_visible(True)
+        ax.spines['bottom'].set_visible(True)
+        ax.spines['left'].set_visible(True)
+        
+        # Enhanced grid settings
+        ax.grid(True, 
+                linestyle='--',      # Dashed lines
+                alpha=0.4,           # More opaque
+                color='gray',        # Gray color
+                which='major')       # Show major grid lines
+        
+        valid_label_idx += 1
     
-    plt.xlabel('Layer', fontsize=12, fontweight='bold')
-    plt.ylabel('Average Patching Effect', fontsize=12, fontweight='bold')
-    plt.title('Layer-wise Attribution Effects Across Model', 
-             fontsize=14, 
-             fontweight='bold', 
-             pad=20)
+    # Add a common title for all subplots
+    fig.suptitle(model_id, fontsize=24, y=0.98, color='black')
     
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Adjust layout to make room for the suptitle
     
-    plt.legend(bbox_to_anchor=(1.05, 1), 
-              loc='upper left', 
-              borderaxespad=0.,
-              frameon=True,
-              fontsize=10)
+    model_id_lower = model_name.split('/')[-1].lower()
     
-    plt.tight_layout()
-    
-    model_id = model_name.split('/')[-1].lower()
-    
-    plt.savefig(f'figures/layer_effects_{model_id}.png', 
+    plt.savefig(f'figures/layer_effects_{model_id_lower}_subplots.pdf', 
                 dpi=300, 
                 bbox_inches='tight',
-                facecolor='white')
+                facecolor='white',
+                edgecolor='none')
     plt.show()
     plt.close()
 
 # %%
 # Load model and data
-model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"  # Can be changed to use different models
+model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Can be changed to use different models
 model, tokenizer, mean_vectors_dict = utils.load_model_and_vectors(compute_features=False, model_name=model_name)
 
 # %%
@@ -185,10 +217,10 @@ for label in labels:
 
         if label_positions:  # Only process if we found labeled sentences
             effects = analyze_layer_effects(
-                model, 
-                tokenizer, 
-                original_text, 
-                label, 
+                model,
+                tokenizer,
+                original_text,
+                label,
                 mean_vectors_dict,
                 label_positions
             )

@@ -1,9 +1,14 @@
 # %%
 import torch
 import matplotlib.pyplot as plt
+import argparse
 
-model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
-mean_vectors_dict = torch.load(f"mean_vectors_{model_name.split('/')[-1].lower()}.pt")
+parser = argparse.ArgumentParser()
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B")
+args, _ = parser.parse_known_args()
+
+model_name = args.model
+mean_vectors_dict = torch.load(f"data/mean_vectors_{model_name.split('/')[-1].lower()}.pt")
 feature_vectors = {}
 
 overall_mean = mean_vectors_dict['overall']['mean']
@@ -58,4 +63,17 @@ def plot_cosine_similarity_heatmap(feature_vectors, model_id):
 
 # Plot the aggregated heatmap
 plot_cosine_similarity_heatmap(feature_vectors, model_id=model_name.split('/')[-1].lower())
+# %%
+for label in feature_vectors:
+    unembed = torch.load(f"{model_name.split('/')[-1].lower()}_unembed.pt").to(torch.float32)
+    unembed = unembed / unembed.norm(dim=-1, keepdim=True)
+
+    features = feature_vectors[label]
+    features = features / features.norm(dim=-1, keepdim=True)
+
+    max_sim = (features @ unembed.T).max(dim=-1)
+
+    print(f"Label: {label}")
+    for layer in range(features.shape[0]):
+        print(f"Layer {layer}: {max_sim.indices[layer].item()}, {max_sim.values[layer].item()}")
 # %%
