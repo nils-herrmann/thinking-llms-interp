@@ -91,7 +91,7 @@ def update_mean_vectors(mean_vectors, layer_outputs, label_positions, index):
     for label, positions in label_positions.items():
         for position in positions:
             start, end = position
-            vectors = layer_outputs[:, start-1:end-1].mean(dim=1)
+            vectors = layer_outputs[:, start-1:min(end-1, start+2)].mean(dim=1)
             current_count = mean_vectors[label]['count']
             current_mean = mean_vectors[label]['mean']
             mean_vectors[label]['mean'] = current_mean + (vectors - current_mean) / (current_count + 1)
@@ -134,7 +134,7 @@ def process_single_message(message, tokenizer, model, mean_vectors, get_annotati
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B")
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
 args, _ = parser.parse_known_args()
 
 model_name = args.model
@@ -155,7 +155,7 @@ mean_vectors = defaultdict(lambda: {
 save_every = 1
 save_path = f"data/mean_vectors_{model_name.split('/')[-1].lower()}.pt"
 
-load_from_json = False
+load_from_json = True
 responses_json_path = f"data/responses_{model_name.split('/')[-1].lower()}.json"
 
 responses_data = []
@@ -200,5 +200,5 @@ torch.save(save_dict, save_path)
 print("Saved final mean vectors")
 
 # %%
-torch.save(model.lm_head.weight.data.detach().cpu(), f"{model_name.split('/')[-1].lower()}_unembed.pt")
+torch.save(model.lm_head.weight.data.detach().cpu(), f"data/{model_name.split('/')[-1].lower()}_unembed.pt")
 # %%

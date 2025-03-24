@@ -2,9 +2,11 @@
 import torch
 import matplotlib.pyplot as plt
 import argparse
+from utils import steering_config
 
+# %%
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B")
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B")
 args, _ = parser.parse_known_args()
 
 model_name = args.model
@@ -17,25 +19,21 @@ for label in mean_vectors_dict:
         feature_vectors[label] = mean_vectors_dict[label]['mean'] - overall_mean
 
 def plot_cosine_similarity_heatmap(feature_vectors, model_id):
-    labels = list(feature_vectors.keys())
+    labels = list(steering_config[model_name].keys())
     n_labels = len(labels)
     
     # Create similarity matrix
     similarity_matrix = torch.zeros((n_labels, n_labels))
 
-    n_layers = feature_vectors[labels[0]].shape[0]
-
-    for layer_idx in range(n_layers):
-            for i, label_1 in enumerate(labels):
-                for j, label_2 in enumerate(labels):
-                    similarity_matrix[i, j] += torch.cosine_similarity(
-                        feature_vectors[label_1][layer_idx], 
-                        feature_vectors[label_2][layer_idx], 
-                        dim=-1
-                    )
-    
-    similarity_matrix /= n_layers
-    
+    for i, label_1 in enumerate(labels):
+        for j, label_2 in enumerate(labels):
+            layer_idx = steering_config[model_name][label_1]["pos_layers"][-1]
+            similarity_matrix[i, j] = torch.cosine_similarity(
+                feature_vectors[label_1][layer_idx], 
+                feature_vectors[label_2][layer_idx], 
+                dim=-1
+            )
+                
     # Create heatmap
     plt.figure(figsize=(10, 8))
     im = plt.imshow(similarity_matrix, cmap='Blues', vmin=0, vmax=1)
@@ -63,17 +61,8 @@ def plot_cosine_similarity_heatmap(feature_vectors, model_id):
 
 # Plot the aggregated heatmap
 plot_cosine_similarity_heatmap(feature_vectors, model_id=model_name.split('/')[-1].lower())
+
 # %%
 for label in feature_vectors:
-    unembed = torch.load(f"{model_name.split('/')[-1].lower()}_unembed.pt").to(torch.float32)
-    unembed = unembed / unembed.norm(dim=-1, keepdim=True)
-
-    features = feature_vectors[label]
-    features = features / features.norm(dim=-1, keepdim=True)
-
-    max_sim = (features @ unembed.T).max(dim=-1)
-
     print(f"Label: {label}")
-    for layer in range(features.shape[0]):
-        print(f"Layer {layer}: {max_sim.indices[layer].item()}, {max_sim.values[layer].item()}")
-# %%
+    print(feature_vectors[label].norm(dim=-1))

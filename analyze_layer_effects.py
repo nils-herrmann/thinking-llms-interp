@@ -1,4 +1,7 @@
 # %%
+import dotenv
+dotenv.load_dotenv(".env")
+
 import torch
 import json
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -38,7 +41,7 @@ def compute_kl_divergence_metric(logits):
     detached_probs = F.log_softmax(logits.detach(), dim=-1)
     return F.kl_div(probs, detached_probs, reduction='batchmean')
 
-def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, label_positions):
+def analyze_layer_effects(model, tokenizer, text, label, feature_vectors, label_positions):
     input_ids = tokenizer(text, return_tensors="pt").input_ids.to("cuda")
     
     patching_effects = [0 for _ in range(model.config.num_hidden_layers)]
@@ -71,14 +74,14 @@ def analyze_layer_effects(model, tokenizer, text, label, mean_vectors_dict, labe
         layer_activations = [layer_activations[i].value for i in range(model.config.num_hidden_layers)]
         layer_gradients = [layer_gradients[i].value for i in range(model.config.num_hidden_layers)]
 
-        feature_activation = mean_vectors_dict[label]['mean'].to(torch.bfloat16).to("cuda") - mean_vectors_dict['overall']['mean'].to(torch.bfloat16).to("cuda")
+        feature_activation = feature_vectors[label].to(torch.bfloat16).to("cuda")
 
         for layer_idx in range(model.config.num_hidden_layers):
             # Get activations and gradients for the entire labeled section
-            activations = layer_activations[layer_idx][0, start-1:start]
-            gradients = layer_gradients[layer_idx][0, start-1:start]
+            activations = layer_activations[layer_idx][0, start-1:min(start, end-2)]
+            gradients = layer_gradients[layer_idx][0, start-1:min(start, end-2)]
             
-            effect = torch.einsum('d,sd->s', feature_activation[layer_idx], gradients).mean()
+            effect = torch.einsum('d,sd->s', feature_activation[layer_idx], gradients).mean().abs()
             
             patching_effects[layer_idx] += effect.cpu().item()
         
@@ -113,17 +116,21 @@ def plot_layer_effects(layer_effects, model_name):
         ax.set_facecolor('white')
         
         effects_array = np.array(effects)
-        mean_effects = np.mean(effects_array, axis=0)
+        
+        # Handle NaN values by replacing them with 0
+        effects_array = np.nan_to_num(effects_array, nan=0.0)
+        
+        # Compute mean and std, ignoring NaN values
+        mean_effects = np.nanmean(effects_array, axis=0)
+        std_effects = np.nanstd(effects_array, axis=0)
         
         # Apply smoothing using convolution
-        window_size = 4  # Increase coarseness by reducing window size
+        window_size = 1  # Increase coarseness by reducing window size
         kernel = np.ones(window_size) / window_size
         smoothed_effects = np.convolve(mean_effects, kernel, mode='valid')
+        std_smoothed = np.convolve(std_effects, kernel, mode='valid')
         
         x = range(len(smoothed_effects))
-
-        std_effects = np.std(effects_array, axis=0)
-        std_smoothed = np.convolve(std_effects, kernel, mode='valid')
         
         ax.fill_between(x, 
                         smoothed_effects - std_smoothed,
@@ -191,7 +198,7 @@ def plot_layer_effects(layer_effects, model_name):
 # %%
 # Load model and data
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Can be changed to use different models
-model, tokenizer, mean_vectors_dict = utils.load_model_and_vectors(compute_features=False, model_name=model_name)
+model, tokenizer, feature_vectors = utils.load_model_and_vectors(compute_features=True, model_name=model_name)
 
 # %%
 with open(f'data/responses_{model_name.split("/")[-1].lower()}.json', 'r') as f:
@@ -213,7 +220,10 @@ for label in labels:
 
         
         # Find token positions of labeled sentences
-        label_positions = find_label_positions(annotated_text, original_text, tokenizer, label)
+        label_positions = []
+        for label_j in labels:
+            if label_j != label:
+                label_positions.extend(find_label_positions(annotated_text, original_text, tokenizer, label_j))
 
         if label_positions:  # Only process if we found labeled sentences
             effects = analyze_layer_effects(
@@ -221,7 +231,7 @@ for label in labels:
                 tokenizer,
                 original_text,
                 label,
-                mean_vectors_dict,
+                feature_vectors,
                 label_positions
             )
 

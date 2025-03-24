@@ -318,9 +318,7 @@ messages = [
     {"role": "user", "content": "How does natural selection lead to evolution?"},
     {"role": "user", "content": "Why do some materials decompose faster than others?"},
     {"role": "user", "content": "How does the greenhouse effect influence Earth's temperature?"}
-
 ]
-
 
 eval_messages = [
     # Mathematical Logic
@@ -374,8 +372,53 @@ eval_messages = [
     {"role": "user", "content": "Why does a metal feel colder than wood at room temperature?"}
 ]
 
+validation_messages = [
+    # Mathematical Logic
+    {"role": "user", "content": "What's the largest three-digit number that's divisible by both 9 and 11?"},
+    {"role": "user", "content": "Find three consecutive numbers whose sum is 150."},
+    
+    # Spatial Reasoning
+    {"role": "user", "content": "If you slice a cube through three vertices that share an edge, what shape do you get?"},
+    {"role": "user", "content": "What shape is formed when a cone intersects with a plane perpendicular to its axis?"},
+    
+    # Verbal Logic
+    {"role": "user", "content": "Complete: Symphony is to orchestra as novel is to _____"},
+    {"role": "user", "content": "Complete: Telescope is to stars as microscope is to _____"},
+    
+    # Pattern Recognition
+    {"role": "user", "content": "What comes next: 1, 3, 6, 10, 15, _____"},
+    {"role": "user", "content": "What comes next: AZ, BY, CX, DW, _____"},
+    
+    # Lateral Thinking
+    {"role": "user", "content": "What has cities but no houses, forests but no trees, and rivers but no water?"},
+    {"role": "user", "content": "A man is trapped in a room with only two exits. One exit leads to a room made of magnifying glass that will fry him instantly. The other exit leads to a room with a fire-breathing dragon. How does he escape?"},
+    
+    # Causal Reasoning
+    {"role": "user", "content": "If fever indicates infection, and you have an infection, must you have a fever?"},
+    {"role": "user", "content": "If all A's are B's, and this is not a B, what can you conclude about it being an A?"},
+    
+    # Probabilistic Thinking
+    {"role": "user", "content": "What's the probability of getting exactly one 6 when rolling five dice?"},
+    {"role": "user", "content": "What's the probability of drawing all face cards when dealing 3 cards?"},
+    
+    # Systems Thinking
+    {"role": "user", "content": "How would universal basic income affect different societal systems?"},
+    {"role": "user", "content": "How might artificial intelligence affect different sectors of the economy?"},
+    
+    # Creative Problem Solving
+    {"role": "user", "content": "How can you create art without using traditional art supplies?"},
+    {"role": "user", "content": "Design a way to keep food fresh without refrigeration."},
+    
+    # Scientific Reasoning
+    {"role": "user", "content": "How does cellular respiration produce energy?"},
+    {"role": "user", "content": "Why do some chemical reactions release heat while others absorb it?"}
+]
+
 labels = [
-    "forward-reasoning",
-    "checking",
-    "backtracking"
+    "initializing",
+    "deduction",
+    "uncertainty-estimation",
+    "example-testing",
+    "backtracking",
+    "adding-knowledge"
 ]

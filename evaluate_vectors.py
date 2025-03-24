@@ -1,109 +1,90 @@
 # %%
+import dotenv
+dotenv.load_dotenv(".env")
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 from nnsight import NNsight
 import matplotlib.pyplot as plt
-from utils import chat
+from utils import chat, steering_config
 import re
 import numpy as np
-from messages import eval_messages, labels
+from messages import validation_messages, labels
 from tqdm import tqdm
 import gc
-import random
 import os
 import utils
 
 os.system('')  # Enable ANSI support on Windows
 
-random.shuffle(eval_messages)
-
 # %% Evaluation examples - 3 from each category
-def load_model_and_vectors(model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-8B"):
-    model, tokenizer, feature_vectors = utils.load_model_and_vectors(compute_features=True, model_name=model_name)
+def load_model_and_vectors(model_name="deepseek-ai/DeepSeek-R1-Distill-8B"):
+    model, tokenizer, feature_vectors = utils.load_model_and_vectors(compute_features=True, return_steering_vector_set=True, model_name=model_name)
     return model, tokenizer, feature_vectors
-
-def get_thinking_activations(model, tokenizer, message_idx):
-    """Get activations for a specific evaluation example"""
-    message = eval_messages[message_idx]
-    
-    # Generate response
-    tokenized_messages = tokenizer.apply_chat_template([message], add_generation_prompt=True, return_tensors="pt").to("cuda")
-    output = model.generate(
-        tokenized_messages,
-        max_new_tokens=500,
-        do_sample=False,
-        pad_token_id=tokenizer.eos_token_id
-    )
-    response = tokenizer.decode(output[0], skip_special_tokens=True)
-    
-    # Extract thinking process
-    think_start = response.index("<think>") + len("<think>")
-    try:
-        think_end = response.index("</think>")
-    except ValueError:
-        think_end = len(response)
-    thinking_process = response[think_start:think_end].strip()
-    
-    # Get activations
-    layer_outputs = []
-    with model.trace(output):
-        for layer_idx in range(model.config.num_hidden_layers):
-            layer_outputs.append(model.model.layers[layer_idx].output[0].save())
-    
-    layer_outputs = torch.cat([x.value.cpu().detach().to(torch.float32) for x in layer_outputs], dim=0)
-    
-    return layer_outputs, thinking_process, response
 
 # %%
 model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Can be changed to use different models
 model, tokenizer, feature_vectors = load_model_and_vectors(model_name)
 
 # %% Get activations and response
-data_idx = 3
-activations, thinking_process, full_response = get_thinking_activations(model, tokenizer, data_idx)
+data_idx = 1
 
 # %%
 print("Original response:")
-input_ids = tokenizer.apply_chat_template([eval_messages[data_idx]], add_generation_prompt=True, return_tensors="pt").to("cuda")
+input_ids = tokenizer.apply_chat_template([validation_messages[data_idx]], add_generation_prompt=True, return_tensors="pt").to("cuda")
 output_ids = utils.custom_generate_with_projection_removal(
     model,
     tokenizer,
     input_ids,
-    max_new_tokens=500,
+    max_new_tokens=250,
     label="none", 
-    feature_vectors=feature_vectors,
-    show_progress=True
+    feature_vectors=None,
+    steering_config=steering_config[model_name],
 )
 response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
 print(response)
 print("\n================\n")
 
 # %%
-for t in ["positive", "negative"]:
-    for label, layers, coefficient in [
-        ("backtracking", [14], -1), 
-        ("adding-knowledge", [9], -1), 
-        ("example-testing", [12], 1), 
-        ("uncertainty-estimation", [10], 1)]:
-            
-            print(f"Label: {label}, Steer: {t}")
-            print(f"")
+for label in ['adding-knowledge', 'example-testing', 'backtracking', 'uncertainty-estimation']:
 
-            input_ids = tokenizer.apply_chat_template([eval_messages[data_idx]], add_generation_prompt=True, return_tensors="pt").to("cuda")
+        for t in ["negative"]:
+
+            print(f"Label: {label}, {t}")
+
+            input_ids = tokenizer.apply_chat_template([validation_messages[data_idx]], add_generation_prompt=True, return_tensors="pt").to("cuda")
             output_ids = utils.custom_generate_with_projection_removal(
                 model,
                 tokenizer,
                 input_ids,
-                max_new_tokens=200,
+                max_new_tokens=250,
                 label=label,
                 feature_vectors=feature_vectors,
-                layers=layers,
-                coefficient=coefficient,
+                steering_config=steering_config[model_name],
                 steer_positive=True if t == "positive" else False,
-                show_progress=True
             )
 
             response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
             print(response)
             print("\n================\n")
+# %%
+for label in ['adding-knowledge', 'backtracking', 'example-testing', 'uncertainty-estimation']:
+    unembed = torch.load(f"data/{model_name.split('/')[-1].lower()}_unembed.pt").to(torch.float32)
+    unembed = unembed / unembed.norm(dim=-1, keepdim=True)
+
+    features = feature_vectors[label][steering_config[model_name][label]["pos_layers"][-1]]
+    features = features / features.norm(dim=-1, keepdim=True)
+
+    max_sims = torch.topk(features @ unembed.T, k=20, dim=-1)
+
+    print(f"Label: {label}")
+    for i, (idx, sim) in enumerate(zip(max_sims.indices, max_sims.values)):
+        print(f"{i+1}. Index: {tokenizer.decode(idx.item())}, Similarity: {sim.item()}")
+
+# %%
+# print norm of each feature vector
+for label in feature_vectors:
+    for i, feature in enumerate(feature_vectors[label]):
+        print(f"Label: {label}, Feature {i+1}: {feature.norm()}")
+
 # %%

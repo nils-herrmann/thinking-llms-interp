@@ -1,12 +1,16 @@
 # %%
+import dotenv
+dotenv.load_dotenv(".env")
+
 from transformers import AutoTokenizer, AutoModelForCausalLM
 import torch
 from nnsight import NNsight
-from utils import chat
+from utils import chat, steering_config
 import re
 import json
 import random
 from messages import eval_messages
+import messages
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,7 +23,7 @@ def load_model_and_vectors(model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
     model, tokenizer, feature_vectors = utils.load_model_and_vectors(compute_features=True, model_name=model_name)
     return model, tokenizer, feature_vectors
 
-def get_label_counts(thinking_process, labels):
+def get_label_counts(thinking_process,labels):
     # Get annotated version using chat function
     annotated_response = chat(f"""
     Please split the following reasoning chain of an LLM into annotated parts using labels and the following format ["label"]...["end-section"]. A sentence should be split into multiple parts if it incorporates multiple behaviours indicated by the labels.
@@ -39,53 +43,61 @@ def get_label_counts(thinking_process, labels):
     """)
     
     # Initialize token counts for each label
-    label_token_counts = {label: 0 for label in labels}
+    label_counts = {label: 0 for label in messages.labels}
     
     # Find all annotated sections
     pattern = r'\["([\w-]+)"\]([^\[]+)'
     matches = re.finditer(pattern, annotated_response)
     
     # Get tokens for the entire thinking process
-    total_tokens = len(tokenizer.encode(thinking_process))
+    total = 0
     
     # Count tokens for each label
     for match in matches:
         label = match.group(1)
         text = match.group(2).strip()
-        if label != "end-section" and label in labels:
+        if label != "end-section" and label in messages.labels:
             # Count tokens in this section
-            token_count = len(tokenizer.encode(text)) - 1  # Subtract 1 to account for potential BOS token
-            label_token_counts[label] += token_count
+            label_counts[label] += 1
+            total += 1
     
     # Convert to fractions
     label_fractions = {
-        label: count / total_tokens if total_tokens > 0 else 0 
-        for label, count in label_token_counts.items()
+        label: count / total if total > 0 else 0 
+        for label, count in label_counts.items()
     }
             
     return label_fractions, annotated_response
 
-def generate_and_analyze(model, tokenizer, message, feature_vectors, label, labels, steer_mode="none"):
+def generate_and_analyze(model, tokenizer, message, feature_vectors, model_steering_config, label, labels, steer_mode="none"):
     input_ids = tokenizer.apply_chat_template([message], add_generation_prompt=True, return_tensors="pt").to("cuda")
     
     steer_positive = True if steer_mode == "positive" else False
 
     if(label == "uncertainty-estimation"):
-        layers = [9]
-        coefficient = -3
-        print(f"Setting layers for {label}: {layers}")
+        pos_layers = model_steering_config[label]["pos_layers"]
+        neg_layers = model_steering_config[label]["neg_layers"]
+        pos_coefficient = model_steering_config[label]["pos_coefficient"]
+        neg_coefficient = model_steering_config[label]["neg_coefficient"]
+        feature_vector = feature_vectors[label][steering_config[model_name][label]["vector_layer"]]
     elif(label == "example-testing"):
-        layers = [12]
-        coefficient = -2
-        print(f"Setting layers for {label}: {layers}")
+        pos_layers = model_steering_config[label]["pos_layers"]
+        neg_layers = model_steering_config[label]["neg_layers"]
+        pos_coefficient = model_steering_config[label]["pos_coefficient"]
+        neg_coefficient = model_steering_config[label]["neg_coefficient"]
+        feature_vector = feature_vectors[label][steering_config[model_name][label]["vector_layer"]]
     elif(label == "backtracking"):
-        layers = [14]
-        coefficient = 3
-        print(f"Setting layers for {label}: {layers}")
+        pos_layers = model_steering_config[label]["pos_layers"]
+        neg_layers = model_steering_config[label]["neg_layers"]
+        pos_coefficient = model_steering_config[label]["pos_coefficient"]
+        neg_coefficient = model_steering_config[label]["neg_coefficient"]
+        feature_vector = feature_vectors[label][steering_config[model_name][label]["vector_layer"]]
     elif(label == "adding-knowledge"):
-        layers = [9]
-        coefficient = -2
-        print(f"Setting layers for {label}: {layers}")
+        pos_layers = model_steering_config[label]["pos_layers"]
+        neg_layers = model_steering_config[label]["neg_layers"]
+        pos_coefficient = model_steering_config[label]["pos_coefficient"]
+        neg_coefficient = model_steering_config[label]["neg_coefficient"]
+        feature_vector = feature_vectors[label][steering_config[model_name][label]["vector_layer"]]
 
     output_ids = utils.custom_generate_with_projection_removal(
         model,
@@ -93,11 +105,9 @@ def generate_and_analyze(model, tokenizer, message, feature_vectors, label, labe
         input_ids,
         max_new_tokens=500,
         label=label if steer_mode != "none" else "none",
-        feature_vectors=feature_vectors,
-        layers=layers,
-        coefficient=coefficient,
-        steer_positive=steer_positive,
-        show_progress=False
+        feature_vectors=feature_vectors if steer_mode != "none" else None,
+        steering_config=steering_config[model_name],
+        steer_positive=steer_positive if steer_mode != "none" else None,
     )
     
     response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
@@ -163,7 +173,7 @@ def plot_label_statistics(results, model_name):
     add_labels(x + width, negative_means)
     
     # Improve styling with larger font sizes and bold title
-    ax.set_ylabel('Average Token Fraction (%)', fontsize=24, labelpad=10)
+    ax.set_ylabel('Average Sentence Fraction (%)', fontsize=24, labelpad=10)
     ax.set_title('DeepSeek-R1-Distill-Llama-8B', fontsize=24, pad=20, weight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels([label.replace('-', '\n') for label in labels_list], rotation=0, fontsize=24)
@@ -189,14 +199,19 @@ def plot_label_statistics(results, model_name):
     plt.close()
 
 # %% Parameters
-n_examples = 5
+n_examples = 1
 random.seed(42)
 
-# Create data directory if it doesn't exist
+# %% Create data directory if it doesn't exist
 os.makedirs('data', exist_ok=True)
 
 # Load model and vectors
-model_name = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Can be changed to use different models
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B")
+args, _ = parser.parse_known_args()
+
+model_name = args.model
 model_id = model_name.split('/')[-1].lower()
 
 # %%
@@ -213,11 +228,12 @@ results = {label: [] for label in labels}
 for label in labels:
     for idx in tqdm(eval_indices, desc=f"Processing examples for {label}"):
         message = eval_messages[idx]
-        
+
+        # Only proceed if original version has >5% of the target label
         example_results = {
-            "original": generate_and_analyze(model, tokenizer, message, feature_vectors, label, labels, "none"),
-            "positive": generate_and_analyze(model, tokenizer, message, feature_vectors, label, labels, "positive"),
-            "negative": generate_and_analyze(model, tokenizer, message, feature_vectors, label, labels, "negative")
+            "original": generate_and_analyze(model, tokenizer, message, feature_vectors, steering_config[model_name], label, labels, "none"),
+            "positive": generate_and_analyze(model, tokenizer, message, feature_vectors, steering_config[model_name], label, labels, "positive"),
+            "negative": generate_and_analyze(model, tokenizer, message, feature_vectors, steering_config[model_name], label, labels, "negative")
         }
         
         results[label].append(example_results)
