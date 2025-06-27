@@ -1,0 +1,163 @@
+# %%
+import argparse
+import os
+import sys
+import json
+import re
+import torch
+import numpy as np
+from tqdm import tqdm
+import dotenv
+dotenv.load_dotenv("../.env")
+
+# Add parent directory to path for imports
+sys.path.append('..')
+from utils import utils
+
+parser = argparse.ArgumentParser(description="Annotate thinking processes in generated responses")
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+                    help="Model used to generate responses")
+parser.add_argument("--layer", type=int, default=14,
+                    help="Layer to analyze")
+parser.add_argument("--n_clusters", type=int, default=19,
+                    help="Number of clusters in the SAE")
+args, _ = parser.parse_known_args()
+
+
+def split_into_sentences(text):
+    """Split text into sentences using regex while preserving delimiters"""
+    # Split on sentence boundaries but keep the delimiters
+    sentences = re.split(r'(?<=[.!?;])', text)
+    return [sentence.strip() for sentence in sentences if sentence.strip()]
+
+def format_category_tag(title):
+    """Format category title into a tag"""
+    return title.lower().replace(" ", "-")
+
+def process_responses(responses_file, model, tokenizer, sae, layer, output_file, model_name):
+    """Process responses and annotate thinking processes"""
+    # Load responses
+    with open(responses_file, 'r') as f:
+        responses_data = json.load(f)
+    
+    device = model.device
+    
+    # Get latent descriptions
+    model_id = model_name.split('/')[-1].lower()
+    latent_descriptions = utils.get_latent_descriptions(model_id, layer, args.n_clusters)
+    
+    print(f"Processing {len(responses_data)} responses...")
+    
+    for idx, response_item in tqdm(enumerate(responses_data), total=len(responses_data)):
+        # Get the full response and thinking process
+        full_response = response_item['full_response']
+        thinking_process = response_item['thinking_process']
+   
+        # Split into sentences
+        sentences = split_into_sentences(thinking_process)
+ 
+        # Create mapping from character positions to token positions
+        char_to_token = utils.get_char_to_token_map(full_response, tokenizer)
+        
+        # Tokenize the full response
+        tokens = tokenizer.encode(full_response, return_tensors="pt").to(device)
+        
+        # Run through model to get activations
+        with torch.no_grad():
+            with model.trace(
+                {
+                    "input_ids": tokens,
+                    "attention_mask": (tokens != tokenizer.pad_token_id).long()
+                }
+            ) as tracer:
+                activations = model.model.layers[layer].output[0].save()
+        
+        # Process each sentence
+        annotated_thinking = ""
+        
+        for sentence in sentences:
+            # Find this sentence in the full response
+            # Pattern to match either at start of string or after punctuation/newlines
+            pattern = r'(?:^|(?:[.?!;\n]|\n\n))\s*(' + re.escape(sentence) + ')'
+            match = re.search(pattern, full_response)
+            sentence_pos = match.start(1) if match else -1
+            if sentence_pos < 0:
+                # Sentence not found in full response
+                continue
+                
+            # Get token positions for this sentence
+            token_start = char_to_token.get(sentence_pos)
+            token_end = char_to_token.get(sentence_pos + len(sentence) - 1)
+            
+            if token_start >= token_end or token_start >= activations.shape[1] or token_end > activations.shape[1]:
+                # Invalid token range
+                continue
+            
+            # Get activations for this sentence
+            sentence_activations = activations[0, token_start-1:token_end, :]
+            
+            # Average the activations across all tokens in the sentence first
+            avg_sentence_activation = torch.mean(sentence_activations, dim=0)
+            
+            # Apply SAE to the average activation
+            avg_activation = avg_sentence_activation - sae.b_dec
+            latent_activation = sae.encoder(avg_activation.unsqueeze(0))
+        
+            # Find the latent with highest activation
+            top_latent_idx = torch.argmax(latent_activation.squeeze(0)).item()
+            
+            # Get category title for this latent
+            category_title = latent_descriptions[top_latent_idx]['title']
+            top_activation = round(latent_activation[0, top_latent_idx].item(), 2)
+            
+            # Format category tag
+            category_tag = format_category_tag(category_title)
+            
+            # Add to annotated thinking
+            annotated_thinking += f'["{top_activation}:{category_tag}"]{sentence}["end-section"]'
+        
+        # Save the annotated thinking
+        response_item['annotated_thinking'] = annotated_thinking.strip()
+        
+        # Save intermediate results every 10 items
+        if (idx + 1) % 10 == 0:
+            with open(output_file, 'w') as f:
+                json.dump(responses_data, f, indent=2)
+    
+    # Save final results
+    with open(output_file, 'w') as f:
+        json.dump(responses_data, f, indent=2)
+    
+    return responses_data
+
+# %% Get model ID from model name
+model_name = args.model
+model_id = model_name.split('/')[-1].lower()
+
+# %%
+responses_file = f"results/vars/responses_{model_id}.json"
+output_file = responses_file
+
+# Load model and tokenizer
+print(f"Loading model {model_name}...")
+model, tokenizer = utils.load_model(model_name=model_name)
+
+# %% Load SAE
+print(f"Loading SAE for model {model_id}, layer {args.layer}, clusters {args.n_clusters}...")
+sae, _ = utils.load_sae(model_id, args.layer, args.n_clusters)
+sae = sae.to(model.device)
+
+# %% Process responses
+processed_data = process_responses(
+    responses_file, 
+    model, 
+    tokenizer, 
+    sae, 
+    args.layer,
+    output_file,
+    model_name
+)
+
+print(f"Annotation complete. Annotated data saved to {output_file}") 
+
+# %%
