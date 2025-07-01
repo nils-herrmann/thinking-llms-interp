@@ -33,14 +33,12 @@ parser.add_argument("--max_clusters", type=int, default=20,
                     help="Maximum number of clusters")
 parser.add_argument("--load_in_8bit", action="store_true", default=False,
                     help="Load model in 8-bit mode")
-parser.add_argument("--cache_file", type=str, default=None,
-                    help="Cache file for activations (optional)")
 parser.add_argument("--n_autograder_examples", type=int, default=100,
                     help="Number of examples from each cluster to use for autograding")
 parser.add_argument("--description_examples", type=int, default=50,
                     help="Number of examples to use for generating cluster descriptions")
 parser.add_argument("--clustering_methods", type=str, nargs='+', 
-                    default=["gmm", "pca_gmm", "spherical_kmeans", "pca_kmeans", "agglomerative", "pca_agglomerative"],
+                    default=["gmm", "pca_gmm", "spherical_kmeans", "pca_kmeans", "agglomerative", "pca_agglomerative", "sae_topk"],
                     help="Clustering methods to use")
 args, _ = parser.parse_known_args()
 

@@ -573,16 +573,13 @@ def get_char_to_token_map(text, tokenizer):
             
     return char_to_token
 
-def process_saved_responses(model_name, n_examples, model, tokenizer, layer, eval_mode=False):
+def process_saved_responses(model_name, n_examples, model, tokenizer, layer):
     """Load and process saved responses to get activations"""
     print(f"Processing saved responses for {model_name}...")
     
     # Load model and tokenizer
     model_id = model_name.split('/')[-1].lower()
-    if eval_mode:
-        responses_json_path = f"../generate-responses/results/vars/eval_responses_{model_id}.json"
-    else:
-        responses_json_path = f"../generate-responses/results/vars/responses_{model_id}.json"
+    responses_json_path = f"../generate-responses/results/vars/responses_{model_id}.json"
     
     print(f"Loading responses from {responses_json_path}...")
     try:
