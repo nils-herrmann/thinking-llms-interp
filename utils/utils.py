@@ -2,14 +2,12 @@ import dotenv
 dotenv.load_dotenv("../.env")
 
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 from nnsight import LanguageModel
 from tqdm import tqdm
 import gc
 import time
 import random
 import torch.nn as nn
-import openai
 import anthropic
 import os
 from openai import OpenAI
