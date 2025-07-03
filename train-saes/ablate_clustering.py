@@ -40,7 +40,7 @@ parser.add_argument("--description_examples", type=int, default=50,
 parser.add_argument("--clustering_methods", type=str, nargs='+', 
                     default=["gmm", "pca_gmm", "spherical_kmeans", "pca_kmeans", "agglomerative", "pca_agglomerative", "sae_topk"],
                     help="Clustering methods to use")
-parser.add_argument("--clustering_pilot_size", type=int, default=50000,
+parser.add_argument("--clustering_pilot_size", type=int, default=50_000,
                     help="Number of samples to use for pilot fitting with GMM")
 parser.add_argument("--clustering_pilot_n_init", type=int, default=10,
                     help="Number of initializations for pilot fitting with GMM")
@@ -50,6 +50,8 @@ parser.add_argument("--clustering_full_n_init", type=int, default=1,
                     help="Number of initializations for full fitting with GMM")
 parser.add_argument("--clustering_full_max_iter", type=int, default=100,
                     help="Maximum iterations for full fitting with GMM")
+parser.add_argument("--silhouette_sample_size", type=int, default=50_000,
+                    help="Number of samples to use for silhouette score calculation")
 args, _ = parser.parse_known_args()
 
 # %%
@@ -89,7 +91,7 @@ def clustering_agglomerative(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score
-    silhouette = silhouette_score(example_activations, cluster_labels)
+    silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -133,7 +135,7 @@ def clustering_spherical_kmeans(example_activations, n_clusters, args):
     cluster_centers = cluster_centers / norms
     
     # Calculate silhouette score using cosine distance
-    silhouette = silhouette_score(activations_norm, cluster_labels, metric='cosine')
+    silhouette = silhouette_score(activations_norm, cluster_labels, metric='cosine', sample_size=args.silhouette_sample_size, random_state=42)
     
     print(f"    Spherical KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
 
@@ -230,7 +232,7 @@ def clustering_gmm(example_activations, n_clusters, args):
     cluster_centers = gmm.means_
     
     # Calculate silhouette score
-    silhouette = silhouette_score(example_activations, cluster_labels)
+    silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
     
     total_time = time.time() - start_time
     print(f"    GMM clustering completed in {total_time:.2f} seconds total")
@@ -280,7 +282,7 @@ def clustering_pca_kmeans(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score in reduced space for efficiency
-    silhouette = silhouette_score(reduced_data, cluster_labels)
+    silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
     
     print(f"    PCA+KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
     
@@ -392,7 +394,7 @@ def clustering_pca_gmm(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score in reduced space for efficiency
-    silhouette = silhouette_score(reduced_data, cluster_labels)
+    silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
     
     total_time = time.time() - start_time
     print(f"    PCA+GMM clustering completed in {total_time:.2f} seconds total")
@@ -441,7 +443,7 @@ def clustering_pca_agglomerative(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score in reduced space for efficiency
-    silhouette = silhouette_score(reduced_data, cluster_labels)
+    silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
     
     print(f"    PCA+Agglomerative clustering completed in {time.time() - start_time:.2f} seconds total")
     
@@ -612,7 +614,7 @@ def clustering_sae_topk(example_activations, n_clusters, args, topk=3):
     cluster_centers = cluster_centers / (norms + 1e-8)  # Add small epsilon to avoid division by zero
     
     # Calculate silhouette score
-    silhouette = silhouette_score(example_activations, cluster_labels)
+    silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
     
     # Clean up to free memory
     del sae, X
