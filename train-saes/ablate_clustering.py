@@ -91,7 +91,9 @@ def clustering_agglomerative(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score
+    silhouette_start_time = time.time()
     silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
+    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -135,7 +137,9 @@ def clustering_spherical_kmeans(example_activations, n_clusters, args):
     cluster_centers = cluster_centers / norms
     
     # Calculate silhouette score using cosine distance
+    silhouette_start_time = time.time()
     silhouette = silhouette_score(activations_norm, cluster_labels, metric='cosine', sample_size=args.silhouette_sample_size, random_state=42)
+    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     print(f"    Spherical KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
 
@@ -232,7 +236,9 @@ def clustering_gmm(example_activations, n_clusters, args):
     cluster_centers = gmm.means_
     
     # Calculate silhouette score
+    silhouette_start_time = time.time()
     silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
+    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     total_time = time.time() - start_time
     print(f"    GMM clustering completed in {total_time:.2f} seconds total")
@@ -282,7 +288,9 @@ def clustering_pca_kmeans(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score in reduced space for efficiency
+    silhouette_start_time = time.time()
     silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
+    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     print(f"    PCA+KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
     
@@ -394,7 +402,9 @@ def clustering_pca_gmm(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score in reduced space for efficiency
+    silhouette_start_time = time.time()
     silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
+    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     total_time = time.time() - start_time
     print(f"    PCA+GMM clustering completed in {total_time:.2f} seconds total")
@@ -443,7 +453,9 @@ def clustering_pca_agglomerative(example_activations, n_clusters, args):
             cluster_centers[i] = np.mean(example_activations[mask], axis=0)
     
     # Calculate silhouette score in reduced space for efficiency
+    silhouette_start_time = time.time()
     silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
+    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     print(f"    PCA+Agglomerative clustering completed in {time.time() - start_time:.2f} seconds total")
     
@@ -614,7 +626,9 @@ def clustering_sae_topk(example_activations, n_clusters, args, topk=3):
     cluster_centers = cluster_centers / (norms + 1e-8)  # Add small epsilon to avoid division by zero
     
     # Calculate silhouette score
+    silhouette_start_time = time.time()
     silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
+    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     # Clean up to free memory
     del sae, X
