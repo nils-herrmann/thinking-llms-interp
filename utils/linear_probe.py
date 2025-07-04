@@ -1,3 +1,5 @@
+import torch.nn as nn
+
 class LinearProbe(nn.Module):
     def __init__(self, hidden_size, num_labels):
         super().__init__()

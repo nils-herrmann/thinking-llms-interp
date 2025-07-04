@@ -14,7 +14,6 @@ from sklearn.metrics import silhouette_score
 import random
 from utils.sae import SAE
 from utils.utils import print_and_flush, chat, convert_numpy_types
-from utils.clustering import generate_cluster_description, accuracy_autograder, completeness_autograder
 
 
 def load_trained_clustering_data(model_id, layer, n_clusters, method):

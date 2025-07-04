@@ -7,7 +7,7 @@ from tqdm import tqdm
 import gc
 import time
 import random
-import torch.nn as nn
+
 import anthropic
 import os
 from openai import OpenAI

@@ -1,3 +1,7 @@
+import torch.nn as nn
+import os
+import torch
+
 def load_sae(model_id, layer, n_clusters, load_base_decoder=False):
     sae_path = f'../train-saes/results/vars/clustering_models/sae_{model_id}_layer{layer}_clusters{n_clusters}.pt'
     if not os.path.exists(sae_path):
