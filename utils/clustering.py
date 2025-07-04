@@ -68,9 +68,9 @@ def load_trained_clustering_data(model_id, layer, n_clusters, method):
         return clustering_data
 
 
-def predict_clusters(activations, clustering_data):
+def predict_clusters(activations, clustering_data, silhouette_sample_size=100_000):
     """
-    Predict cluster labels and centers for new activations using loaded clustering data.
+    Predict cluster labels and silhouette score for new activations using loaded clustering data.
     
     Parameters:
     -----------
@@ -78,12 +78,14 @@ def predict_clusters(activations, clustering_data):
         Normalized activation vectors to predict clusters for
     clustering_data : dict
         Dictionary containing the clustering data loaded from file
+    silhouette_sample_size : int
+        Number of samples to use for silhouette score calculation
         
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers) where cluster_labels is array of cluster assignments
-        and cluster_centers is array of cluster center vectors
+        (cluster_labels, silhouette) where cluster_labels is array of cluster assignments
+        and silhouette is the silhouette score
     """
     method = clustering_data['method']
     
@@ -99,7 +101,10 @@ def predict_clusters(activations, clustering_data):
         similarities = np.dot(activations_norm, centers_norm.T)
         cluster_labels = np.argmax(similarities, axis=1)
         
-        return cluster_labels
+        # Calculate silhouette score on original activations
+        silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
+        
+        return cluster_labels, silhouette
     
     elif method == 'spherical_kmeans':
         # Use KMeans predict method on normalized data
@@ -112,7 +117,10 @@ def predict_clusters(activations, clustering_data):
         # Predict using the KMeans model
         cluster_labels = model.predict(activations_norm)
         
-        return cluster_labels
+        # Calculate silhouette score on normalized activations
+        silhouette = compute_silhouette_score(activations_norm, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
+        
+        return cluster_labels, silhouette
     
     elif method == 'gmm':
         # Use GMM predict method
@@ -122,7 +130,10 @@ def predict_clusters(activations, clustering_data):
         # Predict using the GMM model
         cluster_labels = model.predict(activations)
         
-        return cluster_labels
+        # Calculate silhouette score on original activations
+        silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
+        
+        return cluster_labels, silhouette
     
     elif method == 'pca_kmeans':
         # Apply PCA transform first, then use KMeans predict
@@ -136,7 +147,10 @@ def predict_clusters(activations, clustering_data):
         # Predict using KMeans
         cluster_labels = kmeans.predict(reduced_data)
         
-        return cluster_labels
+        # Calculate silhouette score on PCA-reduced data
+        silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
+        
+        return cluster_labels, silhouette
     
     elif method == 'pca_gmm':
         # Apply PCA transform first, then use GMM predict
@@ -150,7 +164,10 @@ def predict_clusters(activations, clustering_data):
         # Predict using GMM
         cluster_labels = gmm.predict(reduced_data)
         
-        return cluster_labels
+        # Calculate silhouette score on PCA-reduced data
+        silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
+        
+        return cluster_labels, silhouette
     
     elif method == 'pca_agglomerative':
         # Apply PCA transform first, then assign to nearest cluster center
@@ -171,7 +188,10 @@ def predict_clusters(activations, clustering_data):
         similarities = np.dot(reduced_norm, centers_norm.T)
         cluster_labels = np.argmax(similarities, axis=1)
         
-        return cluster_labels
+        # Calculate silhouette score on PCA-reduced data
+        silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
+        
+        return cluster_labels, silhouette
     
     elif method == 'sae_topk':
         # Use the encoder to get activations, then take argmax
@@ -201,7 +221,10 @@ def predict_clusters(activations, clustering_data):
             # Get the cluster assignment as the argmax of encoder activations
             cluster_labels = encoded_activations.argmax(dim=1).cpu().numpy()
         
-        return cluster_labels
+        # Calculate silhouette score on original activations
+        silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
+        
+        return cluster_labels, silhouette
     
     else:
         raise ValueError(f"Unknown clustering method: {method}")
@@ -883,7 +906,7 @@ def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
     return results
 
 
-def evaluate_clustering(texts, cluster_labels, n_clusters, example_activations, cluster_centers, 
+def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, example_activations, cluster_centers, 
                        model_name, n_autograder_examples=5, n_description_examples=5):
     """
     Evaluate clustering using both accuracy and optionally completeness autograders.

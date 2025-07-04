@@ -8,7 +8,7 @@ from utils import utils
 import gc
 from utils.utils import print_and_flush
 from utils.clustering import (
-    evaluate_clustering
+    evaluate_clustering_scoring_metrics
 )
 from utils.clustering_methods import CLUSTERING_METHODS
 
@@ -94,7 +94,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         cluster_labels, cluster_centers, silhouette = clustering_func(activations, n_clusters, args)
         
         # Evaluate clustering
-        evaluation_results = evaluate_clustering(
+        scoring_results = evaluate_clustering_scoring_metrics(
             all_texts, 
             cluster_labels, 
             n_clusters, 
@@ -107,15 +107,15 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         
         # Store metrics
         silhouette_scores.append(silhouette)
-        accuracy_scores.append(evaluation_results['accuracy'])
-        orthogonality_scores.append(evaluation_results['orthogonality'])
+        accuracy_scores.append(scoring_results['accuracy'])
+        orthogonality_scores.append(scoring_results['orthogonality'])
         
         # Calculate average F1 score, precision, and recall across all clusters
         f1_sum = 0.0
         precision_sum = 0.0
         recall_sum = 0.0
         f1_count = 0
-        for cluster_id, metrics in evaluation_results['detailed_results'].items():
+        for cluster_id, metrics in scoring_results['detailed_results'].items():
             if metrics['f1'] > 0:  # Only count non-zero F1 scores
                 f1_sum += metrics['f1']
                 precision_sum += metrics['precision']
@@ -130,10 +130,10 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         recall_scores.append(avg_recall)
         
         # Store assignment rate if completeness was run
-        assignment_rates.append(evaluation_results.get('assigned_fraction', 0))
+        assignment_rates.append(scoring_results.get('assigned_fraction', 0))
         
         # Store detailed results
-        detailed_results_dict[n_clusters] = evaluation_results
+        detailed_results_dict[n_clusters] = scoring_results
 
     # Identify optimal number of clusters based on accuracy only
     optimal_n_clusters = cluster_range[np.argmax(accuracy_scores)]
