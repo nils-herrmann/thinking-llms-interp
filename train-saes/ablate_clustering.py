@@ -20,6 +20,11 @@ import torch.nn as nn
 import torch.optim as optim
 
 # %%
+def print_and_flush(message):
+    """Prints a message and flushes stdout."""
+    print(message)
+    sys.stdout.flush()
+
 parser = argparse.ArgumentParser(description="K-means clustering and autograding of neural activations")
 parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
                     help="Model to analyze")
@@ -93,7 +98,7 @@ def clustering_agglomerative(example_activations, n_clusters, args):
     # Calculate silhouette score
     silhouette_start_time = time.time()
     silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
+    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -139,9 +144,9 @@ def clustering_spherical_kmeans(example_activations, n_clusters, args):
     # Calculate silhouette score using cosine distance
     silhouette_start_time = time.time()
     silhouette = silhouette_score(activations_norm, cluster_labels, metric='cosine', sample_size=args.silhouette_sample_size, random_state=42)
-    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
+    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
-    print(f"    Spherical KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
+    print_and_flush(f"    Spherical KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
 
     return cluster_labels, cluster_centers, silhouette
 
@@ -173,11 +178,11 @@ def clustering_gmm(example_activations, n_clusters, args):
     full_n_init = args.clustering_full_n_init
     full_max_iter = args.clustering_full_max_iter
 
-    print(f"    GMM clustering with {n_clusters} clusters on {n_samples} samples...")
+    print_and_flush(f"    GMM clustering with {n_clusters} clusters on {n_samples} samples...")
     
     if n_samples > pilot_size:
         # Step 1: Pilot fit on sub-sample
-        print(f"    Step 1: Pilot fit on {pilot_size} samples with n_init={pilot_n_init}, max_iter={pilot_max_iter}...")
+        print_and_flush(f"    Step 1: Pilot fit on {pilot_size} samples with n_init={pilot_n_init}, max_iter={pilot_max_iter}...")
         pilot_start = time.time()
         
         # Sub-sample
@@ -195,10 +200,10 @@ def clustering_gmm(example_activations, n_clusters, args):
         )
         pilot_gmm.fit(pilot_data)
         pilot_time = time.time() - pilot_start
-        print(f"    Pilot fit completed in {pilot_time:.2f} seconds")
+        print_and_flush(f"    Pilot fit completed in {pilot_time:.2f} seconds")
         
         # Step 2: Fine-tune on full dataset with good initialization
-        print(f"    Step 2: Fine-tune on full {n_samples} samples with n_init={full_n_init}, max_iter={full_max_iter}...")
+        print_and_flush(f"    Step 2: Fine-tune on full {n_samples} samples with n_init={full_n_init}, max_iter={full_max_iter}...")
         finetune_start = time.time()
         
         # Create final GMM with initialization from pilot
@@ -215,11 +220,11 @@ def clustering_gmm(example_activations, n_clusters, args):
         )
         gmm.fit(example_activations)
         finetune_time = time.time() - finetune_start
-        print(f"    Fine-tune completed in {finetune_time:.2f} seconds")
+        print_and_flush(f"    Fine-tune completed in {finetune_time:.2f} seconds")
         
     else:
         # For small datasets, use standard approach
-        print(f"    Small dataset ({n_samples} samples), using standard approach with n_init=10...")
+        print_and_flush(f"    Small dataset ({n_samples} samples), using standard approach with n_init=10...")
         gmm = GaussianMixture(
             n_components=n_clusters,
             covariance_type='diag',
@@ -238,10 +243,10 @@ def clustering_gmm(example_activations, n_clusters, args):
     # Calculate silhouette score
     silhouette_start_time = time.time()
     silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
+    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     total_time = time.time() - start_time
-    print(f"    GMM clustering completed in {total_time:.2f} seconds total")
+    print_and_flush(f"    GMM clustering completed in {total_time:.2f} seconds total")
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -290,9 +295,9 @@ def clustering_pca_kmeans(example_activations, n_clusters, args):
     # Calculate silhouette score in reduced space for efficiency
     silhouette_start_time = time.time()
     silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
+    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
-    print(f"    PCA+KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
+    print_and_flush(f"    PCA+KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -324,22 +329,22 @@ def clustering_pca_gmm(example_activations, n_clusters, args):
     full_n_init = args.clustering_full_n_init
     full_max_iter = args.clustering_full_max_iter
     
-    print(f"    PCA+GMM clustering with {n_clusters} clusters on {n_samples} samples...")
+    print_and_flush(f"    PCA+GMM clustering with {n_clusters} clusters on {n_samples} samples...")
     
     # Determine number of PCA components (min of n_samples, n_features, 100)
     n_components = min(example_activations.shape[0], example_activations.shape[1], 100)
     
     # Apply PCA
-    print(f"    Applying PCA to {n_components} components...")
+    print_and_flush(f"    Applying PCA to {n_components} components...")
     pca_start = time.time()
     pca = PCA(n_components=n_components, random_state=42)
     reduced_data = pca.fit_transform(example_activations)
     pca_time = time.time() - pca_start
-    print(f"    PCA completed in {pca_time:.2f} seconds")
+    print_and_flush(f"    PCA completed in {pca_time:.2f} seconds")
     
     if n_samples > pilot_size:
         # Step 1: Pilot fit on sub-sample
-        print(f"    Step 1: Pilot fit on {pilot_size} samples with n_init={pilot_n_init}, max_iter={pilot_max_iter}...")
+        print_and_flush(f"    Step 1: Pilot fit on {pilot_size} samples with n_init={pilot_n_init}, max_iter={pilot_max_iter}...")
         pilot_start = time.time()
         
         # Sub-sample with fixed random state for reproducibility
@@ -358,10 +363,10 @@ def clustering_pca_gmm(example_activations, n_clusters, args):
         )
         pilot_gmm.fit(pilot_reduced_data)
         pilot_time = time.time() - pilot_start
-        print(f"    Pilot fit completed in {pilot_time:.2f} seconds")
+        print_and_flush(f"    Pilot fit completed in {pilot_time:.2f} seconds")
         
         # Step 2: Fine-tune on full dataset with good initialization
-        print(f"    Step 2: Fine-tune on full {n_samples} samples with n_init={full_n_init}, max_iter={full_max_iter}...")
+        print_and_flush(f"    Step 2: Fine-tune on full {n_samples} samples with n_init={full_n_init}, max_iter={full_max_iter}...")
         finetune_start = time.time()
         
         # Create final GMM with initialization from pilot
@@ -378,11 +383,11 @@ def clustering_pca_gmm(example_activations, n_clusters, args):
         )
         gmm.fit(reduced_data)
         finetune_time = time.time() - finetune_start
-        print(f"    Fine-tune completed in {finetune_time:.2f} seconds")
+        print_and_flush(f"    Fine-tune completed in {finetune_time:.2f} seconds")
         
     else:
         # For small datasets, use standard approach
-        print(f"    Small dataset ({n_samples} samples), using standard approach with n_init=10...")
+        print_and_flush(f"    Small dataset ({n_samples} samples), using standard approach with n_init=10...")
         gmm = GaussianMixture(
             n_components=n_clusters,
             covariance_type='full',
@@ -404,10 +409,10 @@ def clustering_pca_gmm(example_activations, n_clusters, args):
     # Calculate silhouette score in reduced space for efficiency
     silhouette_start_time = time.time()
     silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
+    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     total_time = time.time() - start_time
-    print(f"    PCA+GMM clustering completed in {total_time:.2f} seconds total")
+    print_and_flush(f"    PCA+GMM clustering completed in {total_time:.2f} seconds total")
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -455,9 +460,9 @@ def clustering_pca_agglomerative(example_activations, n_clusters, args):
     # Calculate silhouette score in reduced space for efficiency
     silhouette_start_time = time.time()
     silhouette = silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
+    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
-    print(f"    PCA+Agglomerative clustering completed in {time.time() - start_time:.2f} seconds total")
+    print_and_flush(f"    PCA+Agglomerative clustering completed in {time.time() - start_time:.2f} seconds total")
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -507,7 +512,7 @@ def clustering_sae_topk(example_activations, n_clusters, args, topk=3):
     best_loss = float('inf')
     patience_counter = 0
     
-    print(f"Training sparse autoencoder with {n_clusters} clusters, topk={topk}...")
+    print_and_flush(f"Training sparse autoencoder with {n_clusters} clusters, topk={topk}...")
     for epoch in range(max_epochs):
         # Shuffle data
         indices = torch.randperm(n_samples)
@@ -548,7 +553,7 @@ def clustering_sae_topk(example_activations, n_clusters, args, topk=3):
         
         # Print progress
         if (epoch + 1) % 10 == 0:
-            print(f"Epoch [{epoch+1}/{max_epochs}], Loss: {avg_loss:.6f}")
+            print_and_flush(f"Epoch [{epoch+1}/{max_epochs}], Loss: {avg_loss:.6f}")
         
         # Early stopping check
         if avg_loss < best_loss:
@@ -565,7 +570,7 @@ def clustering_sae_topk(example_activations, n_clusters, args, topk=3):
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"Early stopping at epoch {epoch+1}")
+                print_and_flush(f"Early stopping at epoch {epoch+1}")
                 
                 # Restore best model
                 sae.encoder.weight.data = best_model_state['encoder_weight']
@@ -592,7 +597,7 @@ def clustering_sae_topk(example_activations, n_clusters, args, topk=3):
         'topk': topk,
         'loss': best_loss
     }, sae_save_path)
-    print(f"Saved SAE model to {sae_save_path}")
+    print_and_flush(f"Saved SAE model to {sae_save_path}")
     
     # Use the encoder to determine cluster assignments - get the highest activating feature for each example
     sae.eval()
@@ -628,13 +633,13 @@ def clustering_sae_topk(example_activations, n_clusters, args, topk=3):
     # Calculate silhouette score
     silhouette_start_time = time.time()
     silhouette = silhouette_score(example_activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    print(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
+    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
     
     # Clean up to free memory
     del sae, X
     torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
-    print(f"    Sparse autoencoder clustering completed in {time.time() - start_time:.2f} seconds total. Silhouette score: {silhouette:.4f}")
+    print_and_flush(f"    Sparse autoencoder clustering completed in {time.time() - start_time:.2f} seconds total. Silhouette score: {silhouette:.4f}")
     
     return cluster_labels, cluster_centers, silhouette
 
@@ -742,7 +747,7 @@ def generate_category_descriptions(cluster_centers, texts, cluster_labels, examp
                 break
             except Exception as e:
                 # Fallback to simple description
-                print(f"Error generating description for cluster {cluster_idx}: {e}")
+                print_and_flush(f"Error generating description for cluster {cluster_idx}: {e}")
                 time.sleep(5)
     
     return categories
@@ -778,10 +783,10 @@ def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder
                                                n_autograder_examples=n_autograder_examples)
             break
         except Exception as e:
-            print(f"Error running accuracy autograder: {e}")
+            print_and_flush(f"Error running accuracy autograder: {e}")
             time.sleep(5)
     
-    print(results["avg"])
+    print_and_flush(results["avg"])
     return results
 
 def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
@@ -814,7 +819,7 @@ def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
             results = utils.completeness_autograder(test_texts, categories)
             break
         except Exception as e:
-            print(f"Error running completeness autograder: {e}")
+            print_and_flush(f"Error running completeness autograder: {e}")
             time.sleep(5)
     
     return results
@@ -1010,7 +1015,7 @@ def visualize_results(results_json_path):
     plt.tight_layout(rect=(0, 0, 1, 0.96))  # Adjust for suptitle
     save_path = f'results/figures/{method}_summary_{model_id}_layer{layer}.pdf'
     plt.savefig(save_path)
-    print(f"Saved {method_name} summary visualization to {save_path}")
+    print_and_flush(f"Saved {method_name} summary visualization to {save_path}")
 
 def visualize_method_comparison(model_id, layer, all_results):
     """
@@ -1091,7 +1096,7 @@ def visualize_method_comparison(model_id, layer, all_results):
                 cluster_counts.append(0)  # Default if not found
                 
         except Exception as e:
-            print(f"Error processing results for {method}: {e}")
+            print_and_flush(f"Error processing results for {method}: {e}")
             # Remove the method if we couldn't extract its metrics
             if method in methods:
                 idx = methods.index(method)
@@ -1099,7 +1104,7 @@ def visualize_method_comparison(model_id, layer, all_results):
                 display_names.pop(idx)
     
     if not methods:
-        print("No valid methods with results to visualize")
+        print_and_flush("No valid methods with results to visualize")
         return
     
     # Create bar chart
@@ -1147,7 +1152,7 @@ def visualize_method_comparison(model_id, layer, all_results):
     plt.savefig(f'results/figures/method_comparison_{model_id}_layer{layer}.pdf')
     plt.show()
     
-    print(f"Saved comparison visualization to results/figures/method_comparison_{model_id}_layer{layer}.pdf")
+    print_and_flush(f"Saved comparison visualization to results/figures/method_comparison_{model_id}_layer{layer}.pdf")
 
 def run_clustering_experiment(clustering_method, clustering_func, all_texts, example_activations, args, model_id=None):
     """
@@ -1173,7 +1178,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, exa
     dict
         Results of the clustering experiment
     """
-    print(f"\nRunning {clustering_method.upper()} clustering experiment...")
+    print_and_flush(f"\nRunning {clustering_method.upper()} clustering experiment...")
     
     # For methods that require n_clusters, use the original code
     silhouette_scores = []
@@ -1187,7 +1192,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, exa
     
     cluster_range = list(range(args.min_clusters, args.max_clusters + 1))
     
-    print(f"Testing {len(cluster_range)} different cluster counts...")
+    print_and_flush(f"Testing {len(cluster_range)} different cluster counts...")
     for n_clusters in tqdm(cluster_range, desc=f"{clustering_method.capitalize()} progress"):
         # Perform clustering
         cluster_labels, cluster_centers, silhouette = clustering_func(example_activations, n_clusters, args)
@@ -1268,24 +1273,24 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, exa
     results_json_path = f'results/vars/{clustering_method}_results_{model_id}_layer{args.layer}.json'
     with open(results_json_path, 'w') as f:
         json.dump(results_data, f, indent=2, cls=utils.NumpyEncoder)
-    print(f"Saved {clustering_method} results to {results_json_path}")
+    print_and_flush(f"Saved {clustering_method} results to {results_json_path}")
 
     # Visualize results
     visualize_results(results_json_path)
 
     # Print concise summary of experiment
-    print("\n" + "="*50)
+    print_and_flush("\n" + "="*50)
     model_display = model_id.upper() if model_id else "UNKNOWN"
-    print(f"{clustering_method.upper()} CLUSTERING SUMMARY - {model_display} Layer {args.layer}")
-    print("="*50)
+    print_and_flush(f"{clustering_method.upper()} CLUSTERING SUMMARY - {model_display} Layer {args.layer}")
+    print_and_flush("="*50)
     
-    print(f"- Tested cluster range: {args.min_clusters} to {args.max_clusters}")
-    print(f"- Optimal number of clusters: {optimal_n_clusters}")
+    print_and_flush(f"- Tested cluster range: {args.min_clusters} to {args.max_clusters}")
+    print_and_flush(f"- Optimal number of clusters: {optimal_n_clusters}")
     
     # Print results for all cluster sizes
-    print("\nMetrics for all cluster sizes:")
-    print(f"{'Clusters':<10} {'Silhouette':<12} {'Accuracy':<12} {'Avg F1':<12} {'Orthogonality':<15}")
-    print(f"{'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*15}")
+    print_and_flush("\nMetrics for all cluster sizes:")
+    print_and_flush(f"{'Clusters':<10} {'Silhouette':<12} {'Accuracy':<12} {'Avg F1':<12} {'Orthogonality':<15}")
+    print_and_flush(f"{'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*15}")
     
     for i, n_clusters in enumerate(cluster_range):
         # Calculate average precision and recall for this cluster size
@@ -1301,13 +1306,13 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, exa
         # Highlight the optimal cluster size
         prefix = "* " if n_clusters == optimal_n_clusters else "  "
         
-        print(f"{prefix}{n_clusters:<8} {silhouette_scores[i]:<12.4f} {accuracy_scores[i]:<12.4f} "
+        print_and_flush(f"{prefix}{n_clusters:<8} {silhouette_scores[i]:<12.4f} {accuracy_scores[i]:<12.4f} "
               f"{avg_f1:<12.4f} {orthogonality_scores[i]:<15.4f}")
 
     # Print top clusters in optimal clustering
-    print("\nTop clusters with optimal clustering (K={}):\n".format(optimal_n_clusters))
-    print(f"{'Cluster ID':<10} {'Title':<40} {'Size':<8} {'Precision':<12} {'Recall':<12} {'F1':<8}")
-    print(f"{'-'*10} {'-'*40} {'-'*8} {'-'*12} {'-'*12} {'-'*8}")
+    print_and_flush("\nTop clusters with optimal clustering (K={}):\n".format(optimal_n_clusters))
+    print_and_flush(f"{'Cluster ID':<10} {'Title':<40} {'Size':<8} {'Precision':<12} {'Recall':<12} {'F1':<8}")
+    print_and_flush(f"{'-'*10} {'-'*40} {'-'*8} {'-'*12} {'-'*12} {'-'*8}")
 
     optimal_results = detailed_results_dict[optimal_n_clusters]
     sorted_clusters = sorted(
@@ -1318,7 +1323,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, exa
 
     for cluster_id, cluster_data in sorted_clusters:  # Show all clusters, not just top 5
         title_short = cluster_data['title'][:37] + "..." if len(cluster_data['title']) > 40 else cluster_data['title']
-        print(f"{cluster_id:<10} {title_short:<40} {cluster_data['size']:<8} "
+        print_and_flush(f"{cluster_id:<10} {title_short:<40} {cluster_data['size']:<8} "
               f"{cluster_data['precision']:<12.4f} {cluster_data['recall']:<12.4f} {cluster_data['f1']:<.4f}")
     
     return results_data
@@ -1358,19 +1363,19 @@ def load_all_results(model_id, layer):
                 
                 # Store in all_results dictionary
                 all_results[method] = results
-                print(f"Loaded results for {method}")
+                print_and_flush(f"Loaded results for {method}")
             except Exception as e:
-                print(f"Error loading {file_path}: {e}")
+                print_and_flush(f"Error loading {file_path}: {e}")
     
     if not all_results:
-        print(f"No existing results found for model {model_id} layer {layer}")
+        print_and_flush(f"No existing results found for model {model_id} layer {layer}")
     else:
-        print(f"Loaded {len(all_results)} result sets for visualization")
+        print_and_flush(f"Loaded {len(all_results)} result sets for visualization")
     
     return all_results
 
 # %% Load model and process activations
-print("Loading model and processing activations...")
+print_and_flush("Loading model and processing activations...")
 model, tokenizer = utils.load_model(
     model_name=args.model,
     load_in_8bit=args.load_in_8bit
@@ -1411,17 +1416,17 @@ for method in clustering_methods:
             current_results[method] = results
             break
         except Exception as e:
-            print(f"Error running {method}: {e}")
+            print_and_flush(f"Error running {method}: {e}")
             continue
 
 
 # %% Print summary for current run methods
 if len(current_results) > 1:
-    print("\n" + "="*50)
-    print("CURRENT RUN METHODS COMPARISON")
-    print("="*50)
-    print(f"{'Method':<15} {'Optimal K':<10} {'Silhouette':<12} {'Accuracy':<12} {'F1 Score':<12} {'Orthogonality':<15}")
-    print(f"{'-'*15} {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*15}")
+    print_and_flush("\n" + "="*50)
+    print_and_flush("CURRENT RUN METHODS COMPARISON")
+    print_and_flush("="*50)
+    print_and_flush(f"{'Method':<15} {'Optimal K':<10} {'Silhouette':<12} {'Accuracy':<12} {'F1 Score':<12} {'Orthogonality':<15}")
+    print_and_flush(f"{'-'*15} {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*15}")
     
     for method, results in current_results.items():
         # Get the metrics
@@ -1431,14 +1436,14 @@ if len(current_results) > 1:
         f1 = results['optimal_f1']
         orthogonality = results['optimal_orthogonality']
             
-        print(f"{method.capitalize():<15} {n_clusters:<10} "
+        print_and_flush(f"{method.capitalize():<15} {n_clusters:<10} "
               f"{silhouette:<12.4f} {accuracy:<12.4f} "
               f"{f1:<12.4f} {orthogonality:<15.4f}")
 
 # %% Load ALL available results and create comprehensive visualization
-print("\n" + "="*50)
-print("LOADING ALL AVAILABLE RESULTS FOR COMPREHENSIVE COMPARISON")
-print("="*50)
+print_and_flush("\n" + "="*50)
+print_and_flush("LOADING ALL AVAILABLE RESULTS FOR COMPREHENSIVE COMPARISON")
+print_and_flush("="*50)
 
 all_results = load_all_results(model_id, args.layer)
 
@@ -1446,5 +1451,5 @@ if len(all_results) > 1:
     # Create comparison visualization
     visualize_method_comparison(model_id, args.layer, all_results)
 
-print("\nExperiment complete. All results saved and visualized.")
+print_and_flush("\nExperiment complete. All results saved and visualized.")
 # %%
