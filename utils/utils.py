@@ -12,6 +12,7 @@ import numpy as np
 import sys
 import os
 import random
+from tqdm import tqdm
 
 def print_and_flush(message):
     """Prints a message and flushes stdout."""
@@ -182,7 +183,6 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer):
     overall_running_count = 0
 
     print(f"Extracting activations for {n_examples} sentences...")
-    from tqdm import tqdm
     for response_data in tqdm(responses_data):
         if not response_data.get("thinking_process"):
             continue
