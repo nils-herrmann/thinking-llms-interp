@@ -99,7 +99,6 @@ def process_message_batch(dataset_name, rows, question_ids, messages_by_question
             "original_message": message,
             "full_response": response,
             "thinking_process": thinking,
-            "annotated_thinking": "",  # Empty string for annotated_thinking
             "question_id": question_id,
             "category": row["category"],
             "question": row["question"],

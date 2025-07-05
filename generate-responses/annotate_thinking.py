@@ -50,6 +50,9 @@ def process_responses(responses_file, model, tokenizer, sae, layer, output_file,
     
     print(f"Processing {len(responses_data)} responses...")
     
+    # Create new structure for annotated responses
+    annotated_responses = []
+    
     for idx, response_item in tqdm(enumerate(responses_data), total=len(responses_data)):
         # Get the full response and thinking process
         full_response = response_item['full_response']
@@ -91,7 +94,7 @@ def process_responses(responses_file, model, tokenizer, sae, layer, output_file,
             token_start = char_to_token.get(sentence_pos)
             token_end = char_to_token.get(sentence_pos + len(sentence) - 1)
             
-            if token_start >= token_end or token_start >= activations.shape[1] or token_end > activations.shape[1]:
+            if token_start is None or token_end is None or token_start >= token_end or token_start >= activations.shape[1] or token_end > activations.shape[1]:
                 # Invalid token range
                 continue
             
@@ -118,19 +121,25 @@ def process_responses(responses_file, model, tokenizer, sae, layer, output_file,
             # Add to annotated thinking
             annotated_thinking += f'["{top_activation}:{category_tag}"]{sentence}["end-section"]'
         
-        # Save the annotated thinking
-        response_item['annotated_thinking'] = annotated_thinking.strip()
+        # Create new annotated response item with only required fields
+        annotated_item = {
+            'question_id': response_item['question_id'],
+            'category': response_item['category'],
+            'dataset_name': response_item['dataset_name'],
+            'annotated_thinking': annotated_thinking.strip()
+        }
+        annotated_responses.append(annotated_item)
         
         # Save intermediate results every 10 items
         if (idx + 1) % 10 == 0:
             with open(output_file, 'w') as f:
-                json.dump(responses_data, f, indent=2)
+                json.dump(annotated_responses, f, indent=2)
     
     # Save final results
     with open(output_file, 'w') as f:
-        json.dump(responses_data, f, indent=2)
+        json.dump(annotated_responses, f, indent=2)
     
-    return responses_data
+    return annotated_responses
 
 # %% Get model ID from model name
 model_name = args.model
@@ -138,7 +147,7 @@ model_id = model_name.split('/')[-1].lower()
 
 # %%
 responses_file = f"results/vars/responses_{model_id}.json"
-output_file = responses_file
+output_file = f"results/vars/annotated_responses_{model_id}.json"
 
 # Load model and tokenizer
 print(f"Loading model {model_name}...")
