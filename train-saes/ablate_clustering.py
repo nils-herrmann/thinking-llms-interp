@@ -215,3 +215,5 @@ for method in clustering_methods:
         current_results[method] = results
     except Exception as e:
         print_and_flush(f"Error running {method}: {e}")
+        import traceback
+        print(traceback.format_exc())
