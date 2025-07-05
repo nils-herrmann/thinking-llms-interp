@@ -1,6 +1,5 @@
 # %%
 import os
-import sys
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
@@ -8,15 +7,16 @@ import argparse
 import json
 from sklearn.decomposition import PCA
 import seaborn as sns
-from utils import utils
-from tqdm import tqdm
 import html
 import matplotlib.colors as mcolors
 import colorsys
-from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Rectangle
 import matplotlib.patheffects as path_effects
 from matplotlib.lines import Line2D
+from utils.clustering import get_latent_descriptions
+from utils.utils import load_model
+from utils.sae import load_sae
 
 # %% Parse arguments
 parser = argparse.ArgumentParser(description="SAE Visualization and Analysis")
@@ -46,7 +46,7 @@ def create_combined_visualization(sae, save_path=None):
     hex_colors = generate_distinct_colors(n_latents)
     
     # Create cluster info dictionary
-    cluster_info = utils.get_latent_descriptions(model_id, args.layer, args.n_clusters)
+    cluster_info = get_latent_descriptions(model_id, args.layer, args.n_clusters)
     
     # Normalize decoder weights for cosine similarity
     normalized_weights = decoder_weights / np.linalg.norm(decoder_weights, axis=1, keepdims=True)
@@ -356,7 +356,7 @@ def visualize_token_activations(model, tokenizer, sae, text, layer, save_path=No
     """Visualize SAE activations for each token in a text"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    cluster_info = utils.get_latent_descriptions(model_id, args.layer, args.n_clusters)
+    cluster_info = get_latent_descriptions(model_id, args.layer, args.n_clusters)
     
     # Tokenize the input
     tokens = tokenizer.encode(text, return_tensors="pt").to(device)
@@ -578,7 +578,7 @@ def create_paper_visualization(model, tokenizer, sae, text, layer, save_path=Non
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Get cluster information
-    cluster_info = utils.get_latent_descriptions(model_id, args.layer, args.n_clusters)
+    cluster_info = get_latent_descriptions(model_id, args.layer, args.n_clusters)
     
     # Tokenize the input
     tokens = tokenizer.encode(text, return_tensors="pt").to(device)
@@ -839,13 +839,13 @@ os.makedirs('results/html', exist_ok=True)
 
 # %% Load the model and tokenizer
 print(f"Loading model {args.model}...")
-model, tokenizer = utils.load_model(
+model, tokenizer = load_model(
     model_name=args.model,
     load_in_8bit=False
 )
 
 # %% Load the SAE
-sae, checkpoint = utils.load_sae(model_id, args.layer, args.n_clusters)
+sae, checkpoint = load_sae(model_id, args.layer, args.n_clusters)
 
 # %% Create the combined visualization with cosine similarity matrix and PCA side by side
 print("Creating combined visualization...")
