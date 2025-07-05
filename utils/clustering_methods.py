@@ -604,13 +604,13 @@ def clustering_sae_topk(activations, n_clusters, args, topk=3):
         for i in range(0, n_samples, batch_size):
             batch_X = X[i:min(i+batch_size, n_samples)]
             # Get the full activations without topk restriction for final cluster assignment
-            activations = sae.encoder(batch_X - sae.b_dec)
+            encoder_activations = sae.encoder(batch_X - sae.b_dec)
             # Get the index of the maximum activation for each example
-            top_feature = activations.argmax(dim=1)
+            top_feature = encoder_activations.argmax(dim=1)
             all_top_features.append(top_feature.cpu())
             
             # Free memory
-            del batch_X, activations, top_feature
+            del batch_X, encoder_activations, top_feature
             torch.cuda.empty_cache() if torch.cuda.is_available() else None
             
         # Combine all batches
