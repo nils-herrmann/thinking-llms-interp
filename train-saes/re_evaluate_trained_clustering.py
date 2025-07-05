@@ -28,8 +28,6 @@ parser.add_argument("--max_clusters", type=int, default=20,
 parser.add_argument("--clustering_methods", type=str, nargs='+', 
                     default=list(SUPPORTED_CLUSTERING_METHODS),
                     help="Clustering methods to evaluate")
-parser.add_argument("--silhouette_sample_size", type=int, default=100_000,
-                    help="Number of samples to use for silhouette score calculation")
 parser.add_argument("--load_in_8bit", action="store_true", default=False,
                     help="Load model in 8-bit mode")
 parser.add_argument("--re_compute_cluster_labels", action="store_true", default=False,
@@ -79,12 +77,10 @@ def re_evaluate_clustering_method_with_n_clusters(model_id, layer, n_clusters, m
     
     if re_compute_cluster_labels:
         # Predict cluster labels with new activations
-        cluster_labels, silhouette = predict_clusters(activations, clustering_data, silhouette_sample_size=args.silhouette_sample_size)
+        cluster_labels = predict_clusters(activations, clustering_data)
         clustering_data['cluster_labels'] = cluster_labels
-        clustering_data['silhouette'] = silhouette
     else:
         cluster_labels = clustering_data['cluster_labels']
-        silhouette = clustering_data['silhouette']
     
     # Use evaluate_clustering_scoring_metrics for comprehensive evaluation
     scoring_results = evaluate_clustering_scoring_metrics(
@@ -114,7 +110,6 @@ def re_evaluate_clustering_method_with_n_clusters(model_id, layer, n_clusters, m
     avg_recall = recall_sum / f1_count if f1_count > 0 else 0
     
     return {
-        'silhouette': silhouette,
         'accuracy': scoring_results['accuracy'],
         'precision': avg_precision,
         'recall': avg_recall,
@@ -157,7 +152,6 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
     """
     print_and_flush(f"\nEvaluating {method.upper()} clustering method...")
     cluster_range = list(range(min_clusters, max_clusters + 1))
-    silhouette_scores = []
     accuracy_scores = []
     precision_scores = []
     recall_scores = []
@@ -170,7 +164,6 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
     for n_clusters in tqdm(cluster_range, desc=f"{method.capitalize()} evaluation"):
         results = re_evaluate_clustering_method_with_n_clusters(model_id, layer, n_clusters, method, activations, all_texts, re_compute_cluster_labels)
 
-        silhouette_scores.append(results['silhouette'])
         accuracy_scores.append(results['accuracy'])
         precision_scores.append(results['precision'])
         recall_scores.append(results['recall'])
@@ -192,7 +185,6 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
     # Update the existing results with new metrics
     optimal_idx = cluster_range.index(optimal_n_clusters)
     existing_results.update({
-        'silhouette_scores': silhouette_scores,
         'accuracy_scores': accuracy_scores,
         'precision_scores': precision_scores,
         'recall_scores': recall_scores,
@@ -200,7 +192,6 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         'assignment_rates': assignment_rates,
         'orthogonality_scores': orthogonality_scores,
         'optimal_n_clusters': optimal_n_clusters,
-        'optimal_silhouette': silhouette_scores[optimal_idx],
         'optimal_accuracy': accuracy_scores[optimal_idx],
         'optimal_precision': precision_scores[optimal_idx],
         'optimal_recall': recall_scores[optimal_idx],
@@ -237,7 +228,6 @@ def print_evaluation_summary(results, method):
     print_and_flush("="*50)
     print_and_flush(f"Model: {model_id.upper()}, Layer: {args.layer}")
     print_and_flush(f"Optimal clusters: {results['optimal_n_clusters']}")
-    print_and_flush(f"Optimal silhouette: {results['optimal_silhouette']:.4f}")
     print_and_flush(f"Optimal accuracy: {results['optimal_accuracy']:.4f}")
     print_and_flush(f"Optimal precision: {results['optimal_precision']:.4f}")
     print_and_flush(f"Optimal recall: {results['optimal_recall']:.4f}")
@@ -246,13 +236,13 @@ def print_evaluation_summary(results, method):
     print_and_flush(f"Optimal orthogonality: {results['optimal_orthogonality']:.4f}")
     
     print_and_flush("\nMetrics for all cluster sizes:")
-    print_and_flush(f"{'Clusters':<10} {'Silhouette':<12} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Orthog':<8}")
-    print_and_flush(f"{'-'*10} {'-'*12} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    print_and_flush(f"{'Clusters':<10} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Orthog':<8}")
+    print_and_flush(f"{'-'*10} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
     
     cluster_range = results['cluster_range']
     for i, n_clusters in enumerate(cluster_range):
         prefix = "* " if n_clusters == results['optimal_n_clusters'] else "  "
-        print_and_flush(f"{prefix}{n_clusters:<8} {results['silhouette_scores'][i]:<12.4f} "
+        print_and_flush(f"{prefix}{n_clusters:<8} "
                 f"{results['accuracy_scores'][i]:<10.4f} {results['precision_scores'][i]:<11.4f} "
                 f"{results['recall_scores'][i]:<8.4f} {results['f1_scores'][i]:<8.4f} "
                 f"{results['assignment_rates'][i]:<8.4f} {results['orthogonality_scores'][i]:<8.4f}")
@@ -300,12 +290,12 @@ if len(all_results) > 1:
     print_and_flush("\n" + "="*50)
     print_and_flush("OVERALL COMPARISON")
     print_and_flush("="*50)
-    print_and_flush(f"{'Method':<20} {'Optimal K':<10} {'Silhouette':<12} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Orthog':<8}")
-    print_and_flush(f"{'-'*20} {'-'*10} {'-'*12} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    print_and_flush(f"{'Method':<20} {'Optimal K':<10} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Orthog':<8}")
+    print_and_flush(f"{'-'*20} {'-'*10} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
     
     for method, results in all_results.items():
         print_and_flush(f"{method.capitalize():<20} {results['optimal_n_clusters']:<10} "
-              f"{results['optimal_silhouette']:<12.4f} {results['optimal_accuracy']:<10.4f} "
+              f"{results['optimal_accuracy']:<10.4f} "
               f"{results['optimal_precision']:<11.4f} {results['optimal_recall']:<8.4f} "
               f"{results['optimal_f1']:<8.4f} {results['optimal_assignment_rate']:<8.4f} "
               f"{results['optimal_orthogonality']:<8.4f}")

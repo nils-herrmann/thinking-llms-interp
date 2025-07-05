@@ -167,19 +167,18 @@ def print_methods_comparison_summary(all_results):
     print_and_flush("\n" + "="*50)
     print_and_flush("CURRENT RUN METHODS COMPARISON")
     print_and_flush("="*50)
-    print_and_flush(f"{'Method':<15} {'Optimal K':<10} {'Silhouette':<12} {'Accuracy':<12} {'F1 Score':<12} {'Orthogonality':<15}")
-    print_and_flush(f"{'-'*15} {'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*15}")
+    print_and_flush(f"{'Method':<15} {'Optimal K':<10} {'Accuracy':<12} {'F1 Score':<12} {'Orthogonality':<15}")
+    print_and_flush(f"{'-'*15} {'-'*10} {'-'*12} {'-'*12} {'-'*15}")
     
     for method, results in all_results.items():
         # Get the metrics
         n_clusters = results['optimal_n_clusters']
-        silhouette = results['optimal_silhouette']
         accuracy = results['optimal_accuracy']
         f1 = results['optimal_f1']
         orthogonality = results['optimal_orthogonality']
             
         print_and_flush(f"{method.capitalize():<15} {n_clusters:<10} "
-              f"{silhouette:<12.4f} {accuracy:<12.4f} "
+              f"{accuracy:<12.4f} "
               f"{f1:<12.4f} {orthogonality:<15.4f}")
 
 # %%

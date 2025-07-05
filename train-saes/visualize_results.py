@@ -57,7 +57,6 @@ def visualize_results(results_json_path):
     
     # Extract data for plotting
     cluster_range = results['cluster_range']
-    silhouette_scores = results['silhouette_scores']
     accuracy_scores = results['accuracy_scores']
     f1_scores = results['f1_scores']
     assignment_rates = results['assignment_rates']
@@ -67,46 +66,36 @@ def visualize_results(results_json_path):
     layer = results['layer']
     method = results['clustering_method']
     
-    # Create figure with 3x2 subplots (adding one for orthogonality)
-    fig, axs = plt.subplots(3, 2, figsize=(15, 18))
-    
-    # Silhouette score
-    axs[0, 0].plot(cluster_range, silhouette_scores, 'o-', color='blue')
-    axs[0, 0].set_xlabel('Number of Clusters')
-    axs[0, 0].set_ylabel('Silhouette Score')
-    axs[0, 0].set_title('Silhouette Score vs. Number of Clusters')
-    axs[0, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    # Create figure with 2x2 subplots
+    fig, axs = plt.subplots(2, 2, figsize=(15, 12))
     
     # Accuracy
-    axs[0, 1].plot(cluster_range, accuracy_scores, 'o-', color='green')
-    axs[0, 1].set_xlabel('Number of Clusters')
-    axs[0, 1].set_ylabel('Accuracy')
-    axs[0, 1].set_title('Autograder Accuracy vs. Number of Clusters')
-    axs[0, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    axs[0, 0].plot(cluster_range, accuracy_scores, 'o-', color='green')
+    axs[0, 0].set_xlabel('Number of Clusters')
+    axs[0, 0].set_ylabel('Accuracy')
+    axs[0, 0].set_title('Autograder Accuracy vs. Number of Clusters')
+    axs[0, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     
     # F1 Score
-    axs[1, 0].plot(cluster_range, f1_scores, 'o-', color='red')
-    axs[1, 0].set_xlabel('Number of Clusters')
-    axs[1, 0].set_ylabel('Average F1 Score')
-    axs[1, 0].set_title('Average F1 Score vs. Number of Clusters')
-    axs[1, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    axs[0, 1].plot(cluster_range, f1_scores, 'o-', color='red')
+    axs[0, 1].set_xlabel('Number of Clusters')
+    axs[0, 1].set_ylabel('Average F1 Score')
+    axs[0, 1].set_title('Average F1 Score vs. Number of Clusters')
+    axs[0, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     
     # Assignment Rate
-    axs[1, 1].plot(cluster_range, assignment_rates, 'o-', color='purple')
-    axs[1, 1].set_xlabel('Number of Clusters')
-    axs[1, 1].set_ylabel('Assignment Rate')
-    axs[1, 1].set_title('Completeness: Assignment Rate vs. Number of Clusters')
-    axs[1, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    axs[1, 0].plot(cluster_range, assignment_rates, 'o-', color='purple')
+    axs[1, 0].set_xlabel('Number of Clusters')
+    axs[1, 0].set_ylabel('Assignment Rate')
+    axs[1, 0].set_title('Completeness: Assignment Rate vs. Number of Clusters')
+    axs[1, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     
     # Centroid Orthogonality
-    axs[2, 0].plot(cluster_range, orthogonality_scores, 'o-', color='orange')
-    axs[2, 0].set_xlabel('Number of Clusters')
-    axs[2, 0].set_ylabel('Orthogonality')
-    axs[2, 0].set_title('Centroid Orthogonality vs. Number of Clusters')
-    axs[2, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
-    
-    # Hide the unused subplot
-    axs[2, 1].axis('off')
+    axs[1, 1].plot(cluster_range, orthogonality_scores, 'o-', color='orange')
+    axs[1, 1].set_xlabel('Number of Clusters')
+    axs[1, 1].set_ylabel('Orthogonality')
+    axs[1, 1].set_title('Centroid Orthogonality vs. Number of Clusters')
+    axs[1, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     
     # Add overall title
     method_name = method.capitalize()
@@ -133,7 +122,6 @@ def print_concise_summary(results_data, clustering_method):
     """
     # Extract data for printing
     cluster_range = results_data['cluster_range']
-    silhouette_scores = results_data['silhouette_scores']
     accuracy_scores = results_data['accuracy_scores']
     f1_scores = results_data['f1_scores']
     optimal_n_clusters = results_data['optimal_n_clusters']
@@ -153,8 +141,8 @@ def print_concise_summary(results_data, clustering_method):
 
     # Print results for all cluster sizes
     print_and_flush("\nMetrics for all cluster sizes:")
-    print_and_flush(f"{'Clusters':<10} {'Silhouette':<12} {'Accuracy':<12} {'Avg F1':<12} {'Orthogonality':<15}")
-    print_and_flush(f"{'-'*10} {'-'*12} {'-'*12} {'-'*12} {'-'*15}")
+    print_and_flush(f"{'Clusters':<10} {'Accuracy':<12} {'Avg F1':<12} {'Orthogonality':<15}")
+    print_and_flush(f"{'-'*10} {'-'*12} {'-'*12} {'-'*15}")
 
     for i, n_clusters in enumerate(cluster_range):
         # Calculate average precision and recall for this cluster size
@@ -170,7 +158,7 @@ def print_concise_summary(results_data, clustering_method):
         # Highlight the optimal cluster size
         prefix = "* " if n_clusters == optimal_n_clusters else "  "
         
-        print_and_flush(f"{prefix}{n_clusters:<8} {silhouette_scores[i]:<12.4f} {accuracy_scores[i]:<12.4f} "
+        print_and_flush(f"{prefix}{n_clusters:<8} {accuracy_scores[i]:<12.4f} "
                 f"{avg_f1:<12.4f} {orthogonality_scores[i]:<15.4f}")
 
     # Print top clusters in optimal clustering

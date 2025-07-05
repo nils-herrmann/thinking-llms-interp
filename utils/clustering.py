@@ -10,7 +10,6 @@ import re
 import numpy as np
 import pickle
 import time
-from sklearn.metrics import silhouette_score
 import random
 from utils.utils import print_and_flush, chat, convert_numpy_types
 
@@ -66,9 +65,9 @@ def load_trained_clustering_data(model_id, layer, n_clusters, method):
         return clustering_data
 
 
-def predict_clusters(activations, clustering_data, silhouette_sample_size=100_000):
+def predict_clusters(activations, clustering_data):
     """
-    Predict cluster labels and silhouette score for new activations using loaded clustering data.
+    Predict cluster labels for new activations using loaded clustering data.
     
     Parameters:
     -----------
@@ -76,14 +75,11 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
         Normalized activation vectors to predict clusters for
     clustering_data : dict
         Dictionary containing the clustering data loaded from file
-    silhouette_sample_size : int
-        Number of samples to use for silhouette score calculation
         
     Returns:
     --------
-    tuple
-        (cluster_labels, silhouette) where cluster_labels is array of cluster assignments
-        and silhouette is the silhouette score
+    numpy.ndarray
+        cluster_labels array of cluster assignments
     """
     method = clustering_data['method']
     
@@ -99,15 +95,11 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
         similarities = np.dot(activations_norm, centers_norm.T)
         cluster_labels = np.argmax(similarities, axis=1)
         
-        # Calculate silhouette score on original activations
-        silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
-        
-        return cluster_labels, silhouette
+        return cluster_labels
     
     elif method == 'spherical_kmeans':
         # Use KMeans predict method on normalized data
         model = clustering_data['model']
-        cluster_centers = clustering_data['cluster_centers']
         
         # Normalize activations for spherical kmeans
         activations_norm = activations / np.linalg.norm(activations, axis=1, keepdims=True)
@@ -115,29 +107,21 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
         # Predict using the KMeans model
         cluster_labels = model.predict(activations_norm)
         
-        # Calculate silhouette score on normalized activations
-        silhouette = compute_silhouette_score(activations_norm, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
-        
-        return cluster_labels, silhouette
+        return cluster_labels
     
     elif method == 'gmm':
         # Use GMM predict method
         model = clustering_data['model']
-        cluster_centers = clustering_data['cluster_centers']
         
         # Predict using the GMM model
         cluster_labels = model.predict(activations)
         
-        # Calculate silhouette score on original activations
-        silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
-        
-        return cluster_labels, silhouette
+        return cluster_labels
     
     elif method == 'pca_kmeans':
         # Apply PCA transform first, then use KMeans predict
         pca = clustering_data['pca']
         kmeans = clustering_data['kmeans']
-        cluster_centers = clustering_data['cluster_centers']
         
         # Apply PCA transformation
         reduced_data = pca.transform(activations)
@@ -145,16 +129,12 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
         # Predict using KMeans
         cluster_labels = kmeans.predict(reduced_data)
         
-        # Calculate silhouette score on PCA-reduced data
-        silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
-        
-        return cluster_labels, silhouette
+        return cluster_labels
     
     elif method == 'pca_gmm':
         # Apply PCA transform first, then use GMM predict
         pca = clustering_data['pca']
         gmm = clustering_data['gmm']
-        cluster_centers = clustering_data['cluster_centers']
         
         # Apply PCA transformation
         reduced_data = pca.transform(activations)
@@ -162,10 +142,7 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
         # Predict using GMM
         cluster_labels = gmm.predict(reduced_data)
         
-        # Calculate silhouette score on PCA-reduced data
-        silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
-        
-        return cluster_labels, silhouette
+        return cluster_labels
     
     elif method == 'pca_agglomerative':
         # Apply PCA transform first, then assign to nearest cluster center
@@ -186,10 +163,7 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
         similarities = np.dot(reduced_norm, centers_norm.T)
         cluster_labels = np.argmax(similarities, axis=1)
         
-        # Calculate silhouette score on PCA-reduced data
-        silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
-        
-        return cluster_labels, silhouette
+        return cluster_labels
     
     elif method == 'sae_topk':
         # Use the encoder to get activations, then take argmax
@@ -199,7 +173,6 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
         encoder_weight = clustering_data['encoder_weight']
         encoder_bias = clustering_data['encoder_bias']
         b_dec = clustering_data['b_dec']
-        cluster_centers = clustering_data['cluster_centers']
         
         # Convert to torch tensors
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -219,10 +192,7 @@ def predict_clusters(activations, clustering_data, silhouette_sample_size=100_00
             # Get the cluster assignment as the argmax of encoder activations
             cluster_labels = encoded_activations.argmax(dim=1).cpu().numpy()
         
-        # Calculate silhouette score on original activations
-        silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=silhouette_sample_size, random_state=42)
-        
-        return cluster_labels, silhouette
+        return cluster_labels
     
     else:
         raise ValueError(f"Unknown clustering method: {method}")
@@ -675,31 +645,6 @@ def compute_centroid_orthogonality(cluster_centers):
     avg_orthogonality = np.mean(upper_tri_values) if len(upper_tri_values) > 0 else 0.0
     
     return avg_orthogonality
-
-def compute_silhouette_score(data, cluster_labels, sample_size=50000, random_state=42):
-    """
-    Compute silhouette score with timing information.
-    
-    Parameters:
-    -----------
-    data : numpy.ndarray
-        Data used for clustering
-    cluster_labels : numpy.ndarray
-        Cluster labels
-    sample_size : int
-        Number of samples to use for silhouette score calculation
-    random_state : int
-        Random state for reproducibility
-        
-    Returns:
-    --------
-    float
-        Silhouette score
-    """
-    silhouette_start_time = time.time()
-    silhouette = silhouette_score(data, cluster_labels, sample_size=sample_size, random_state=random_state)
-    print_and_flush(f"    Silhouette score calculation completed in {time.time() - silhouette_start_time:.2f} seconds")
-    return silhouette
 
 
 def generate_representative_examples(cluster_centers, texts, cluster_labels, example_activations):

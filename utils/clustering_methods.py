@@ -8,9 +8,6 @@ from sklearn.mixture import GaussianMixture
 from sklearn.decomposition import PCA
 import time
 from utils.utils import print_and_flush
-from utils.clustering import (
-    compute_silhouette_score,
-)
 from utils.sae import SAE
 
 def clustering_agglomerative(activations, n_clusters, args):
@@ -29,7 +26,7 @@ def clustering_agglomerative(activations, n_clusters, args):
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers, silhouette)
+        (cluster_labels, cluster_centers)
     """
     # Initialize Agglomerative Clustering with Ward linkage
     model = AgglomerativeClustering(
@@ -48,9 +45,6 @@ def clustering_agglomerative(activations, n_clusters, args):
         if np.any(mask):
             cluster_centers[i] = np.mean(activations[mask], axis=0)
     
-    # Calculate silhouette score
-    silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    
     # Save the clustering model
     model_id = args.model.split('/')[-1].lower()
     os.makedirs('results/vars/agglomerative', exist_ok=True)
@@ -63,7 +57,7 @@ def clustering_agglomerative(activations, n_clusters, args):
             'cluster_centers': cluster_centers
         }, f)
     
-    return cluster_labels, cluster_centers, silhouette
+    return cluster_labels, cluster_centers
 
 def clustering_spherical_kmeans(activations, n_clusters, args):
     """
@@ -81,7 +75,7 @@ def clustering_spherical_kmeans(activations, n_clusters, args):
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers, silhouette)
+        (cluster_labels, cluster_centers)
     """
     start_time = time.time()
     # Initialize KMeans
@@ -104,9 +98,6 @@ def clustering_spherical_kmeans(activations, n_clusters, args):
     norms = np.linalg.norm(cluster_centers, axis=1, keepdims=True)
     cluster_centers = cluster_centers / norms
     
-    # Calculate silhouette score using cosine distance
-    silhouette = compute_silhouette_score(activations_norm, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    
     # Save the clustering model
     model_id = args.model.split('/')[-1].lower()
     os.makedirs('results/vars/spherical_kmeans', exist_ok=True)
@@ -121,7 +112,7 @@ def clustering_spherical_kmeans(activations, n_clusters, args):
     
     print_and_flush(f"    Spherical KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
 
-    return cluster_labels, cluster_centers, silhouette
+    return cluster_labels, cluster_centers
 
 def clustering_gmm(activations, n_clusters, args):
     """
@@ -139,7 +130,7 @@ def clustering_gmm(activations, n_clusters, args):
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers, silhouette)
+        (cluster_labels, cluster_centers)
     """
     start_time = time.time()
     n_samples = activations.shape[0]
@@ -213,9 +204,6 @@ def clustering_gmm(activations, n_clusters, args):
     # Use means as cluster centers
     cluster_centers = gmm.means_
     
-    # Calculate silhouette score
-    silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    
     # Save the clustering model
     model_id = args.model.split('/')[-1].lower()
     os.makedirs('results/vars/gmm', exist_ok=True)
@@ -231,7 +219,7 @@ def clustering_gmm(activations, n_clusters, args):
     total_time = time.time() - start_time
     print_and_flush(f"    GMM clustering completed in {total_time:.2f} seconds total")
     
-    return cluster_labels, cluster_centers, silhouette
+    return cluster_labels, cluster_centers
 
 def clustering_pca_kmeans(activations, n_clusters, args):
     """
@@ -249,7 +237,7 @@ def clustering_pca_kmeans(activations, n_clusters, args):
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers, silhouette)
+        (cluster_labels, cluster_centers)
     """
     start_time = time.time()
     # Determine number of PCA components (min of n_samples, n_features, 100)
@@ -275,9 +263,6 @@ def clustering_pca_kmeans(activations, n_clusters, args):
         if np.any(mask):
             cluster_centers[i] = np.mean(activations[mask], axis=0)
     
-    # Calculate silhouette score in reduced space for efficiency
-    silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    
     # Save the clustering model
     model_id = args.model.split('/')[-1].lower()
     os.makedirs('results/vars/pca_kmeans', exist_ok=True)
@@ -293,7 +278,7 @@ def clustering_pca_kmeans(activations, n_clusters, args):
     
     print_and_flush(f"    PCA+KMeans clustering completed in {time.time() - start_time:.2f} seconds total")
     
-    return cluster_labels, cluster_centers, silhouette
+    return cluster_labels, cluster_centers
 
 def clustering_pca_gmm(activations, n_clusters, args):
     """
@@ -311,7 +296,7 @@ def clustering_pca_gmm(activations, n_clusters, args):
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers, silhouette)
+        (cluster_labels, cluster_centers)
     """
     start_time = time.time()
     n_samples = activations.shape[0]
@@ -400,9 +385,6 @@ def clustering_pca_gmm(activations, n_clusters, args):
         if np.any(mask):
             cluster_centers[i] = np.mean(activations[mask], axis=0)
     
-    # Calculate silhouette score in reduced space for efficiency
-    silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    
     # Save the clustering model
     model_id = args.model.split('/')[-1].lower()
     os.makedirs('results/vars/pca_gmm', exist_ok=True)
@@ -419,7 +401,7 @@ def clustering_pca_gmm(activations, n_clusters, args):
     total_time = time.time() - start_time
     print_and_flush(f"    PCA+GMM clustering completed in {total_time:.2f} seconds total")
     
-    return cluster_labels, cluster_centers, silhouette
+    return cluster_labels, cluster_centers
 
 def clustering_pca_agglomerative(activations, n_clusters, args):
     """
@@ -437,7 +419,7 @@ def clustering_pca_agglomerative(activations, n_clusters, args):
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers, silhouette)
+        (cluster_labels, cluster_centers)
     """
     start_time = time.time()
     # Determine number of PCA components (min of n_samples, n_features, 100)
@@ -462,9 +444,6 @@ def clustering_pca_agglomerative(activations, n_clusters, args):
         if np.any(mask):
             cluster_centers[i] = np.mean(activations[mask], axis=0)
     
-    # Calculate silhouette score in reduced space for efficiency
-    silhouette = compute_silhouette_score(reduced_data, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    
     # Save the clustering model
     model_id = args.model.split('/')[-1].lower()
     os.makedirs('results/vars/pca_agglomerative', exist_ok=True)
@@ -480,7 +459,7 @@ def clustering_pca_agglomerative(activations, n_clusters, args):
     
     print_and_flush(f"    PCA+Agglomerative clustering completed in {time.time() - start_time:.2f} seconds total")
     
-    return cluster_labels, cluster_centers, silhouette
+    return cluster_labels, cluster_centers
 
  
 def clustering_sae_topk(activations, n_clusters, args, topk=3):
@@ -502,7 +481,7 @@ def clustering_sae_topk(activations, n_clusters, args, topk=3):
     Returns:
     --------
     tuple
-        (cluster_labels, cluster_centers, silhouette)
+        (cluster_labels, cluster_centers)
     """
     start_time = time.time()
     # Ensure we're working with torch tensors on the appropriate device
@@ -627,9 +606,6 @@ def clustering_sae_topk(activations, n_clusters, args, topk=3):
     norms = np.linalg.norm(cluster_centers, axis=1, keepdims=True)
     cluster_centers = cluster_centers / (norms + 1e-8)  # Add small epsilon to avoid division by zero
     
-    # Calculate silhouette score
-    silhouette = compute_silhouette_score(activations, cluster_labels, sample_size=args.silhouette_sample_size, random_state=42)
-    
     # Save the SAE model after cluster_labels and cluster_centers are computed
     model_id = args.model.split('/')[-1].lower()
     os.makedirs('results/vars/saes', exist_ok=True)
@@ -652,9 +628,9 @@ def clustering_sae_topk(activations, n_clusters, args, topk=3):
     del sae, X
     torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
-    print_and_flush(f"    Sparse autoencoder clustering completed in {time.time() - start_time:.2f} seconds total. Silhouette score: {silhouette:.4f}")
+    print_and_flush(f"    Sparse autoencoder clustering completed in {time.time() - start_time:.2f} seconds total")
     
-    return cluster_labels, cluster_centers, silhouette
+    return cluster_labels, cluster_centers
 
 # Dictionary mapping clustering method names to their implementations
 CLUSTERING_METHODS = {

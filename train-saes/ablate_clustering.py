@@ -44,8 +44,6 @@ parser.add_argument("--clustering_full_n_init", type=int, default=1,
                     help="Number of initializations for full fitting with GMM")
 parser.add_argument("--clustering_full_max_iter", type=int, default=100,
                     help="Maximum iterations for full fitting with GMM")
-parser.add_argument("--silhouette_sample_size", type=int, default=100_000,
-                    help="Number of samples to use for silhouette score calculation")
 args, _ = parser.parse_known_args()
 
 # %%
@@ -77,7 +75,6 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     print_and_flush(f"\nRunning {clustering_method.upper()} clustering experiment...")
     
     # For methods that require n_clusters, use the original code
-    silhouette_scores = []
     accuracy_scores = []
     f1_scores = []
     assignment_rates = []
@@ -91,7 +88,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     print_and_flush(f"Testing {len(cluster_range)} different cluster counts...")
     for n_clusters in tqdm(cluster_range, desc=f"{clustering_method.capitalize()} progress"):
         # Perform clustering
-        cluster_labels, cluster_centers, silhouette = clustering_func(activations, n_clusters, args)
+        cluster_labels, cluster_centers = clustering_func(activations, n_clusters, args)
         
         # Evaluate clustering
         scoring_results = evaluate_clustering_scoring_metrics(
@@ -106,7 +103,6 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         )
         
         # Store metrics
-        silhouette_scores.append(silhouette)
         accuracy_scores.append(scoring_results['accuracy'])
         orthogonality_scores.append(scoring_results['orthogonality'])
         
@@ -144,7 +140,6 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         "model_id": model_id,
         "layer": args.layer,
         "cluster_range": cluster_range,
-        "silhouette_scores": silhouette_scores,
         "accuracy_scores": accuracy_scores,
         "precision_scores": precision_scores,
         "recall_scores": recall_scores,
@@ -152,7 +147,6 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         "assignment_rates": assignment_rates,
         "orthogonality_scores": orthogonality_scores,
         "optimal_n_clusters": optimal_n_clusters,
-        "optimal_silhouette": silhouette_scores[cluster_range.index(optimal_n_clusters)],
         "optimal_accuracy": accuracy_scores[cluster_range.index(optimal_n_clusters)],
         "optimal_precision": precision_scores[cluster_range.index(optimal_n_clusters)],
         "optimal_recall": recall_scores[cluster_range.index(optimal_n_clusters)],
