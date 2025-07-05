@@ -416,7 +416,11 @@ def main():
     # Default responses path
     model_name_short = args.model.split('/')[-1].lower()
     thinking_model_name = utils.model_mapping.get(args.model, model_name_short)
-    responses_json_path = f"../generate-responses/results/vars/responses_{thinking_model_name.split('/')[-1].lower()}.json"
+    if thinking_model_name is None:
+        thinking_model_name = model_name_short
+    thinking_model_short = thinking_model_name.split('/')[-1].lower()
+    responses_json_path = f"../generate-responses/results/vars/responses_{thinking_model_short}.json"
+    annotated_responses_json_path = f"../generate-responses/results/vars/annotated_responses_{thinking_model_short}.json"
     
     if not os.path.exists(responses_json_path):
         raise FileNotFoundError(f"Annotated responses file not found at {responses_json_path}. Please annotate responses first.")
@@ -425,9 +429,28 @@ def main():
     print(f"Loading annotated responses from {responses_json_path}")
     with open(responses_json_path, 'r') as f:
         responses_data = json.load(f)
+
+    # Load annotated responses
+    print(f"Loading annotated responses from {annotated_responses_json_path}")
+    with open(annotated_responses_json_path, 'r') as f:
+        annotated_responses_data = json.load(f)
     
-    # Filter out responses without annotations
-    valid_responses = [resp for resp in responses_data if resp.get('annotated_thinking')]
+    # Match responses with their annotations by index and validate
+    valid_responses = []
+    for i, resp in enumerate(responses_data):
+        if i < len(annotated_responses_data):
+            annotated_resp = annotated_responses_data[i]
+            # Verify that the responses match by question_id and dataset_name
+            if (resp['question_id'] == annotated_resp['question_id'] and 
+                resp['dataset_name'] == annotated_resp['dataset_name'] and
+                annotated_resp.get('annotated_thinking')):
+                # Create merged response with annotated_thinking
+                merged_resp = resp.copy()
+                merged_resp['annotated_thinking'] = annotated_resp['annotated_thinking']
+                valid_responses.append(merged_resp)
+            else:
+                print(f"Warning: Mismatch at index {i} - response question_id: {resp['question_id']}, annotated question_id: {annotated_resp.get('question_id')}")
+    
     print(f"Found {len(valid_responses)} responses with annotations out of {len(responses_data)} total responses")
     
     # Get all available categories sorted alphabetically
@@ -520,7 +543,7 @@ def main():
                 min_lr=args.min_lr,
                 max_norm=max_activation*2,
                 do_output_constr=False,
-                target_loss_target_iters=float('inf'),
+                target_loss_target_iters=float('inf'),  # type: ignore
                 early_stopping_min_delta=1,
                 early_stopping_patience=5,
                 early_stopping_metric='eval_loss',
@@ -556,6 +579,10 @@ def main():
                 best_eval_loss = result['final_eval_loss']
                 best_lr = lr
                 best_result = result
+    
+    if best_result is None:
+        print("No valid optimization results found. Exiting.")
+        return
     
     print(f"\nBest learning rate: {best_lr} (final eval loss: {best_result['final_eval_loss']:.4f})")
     
