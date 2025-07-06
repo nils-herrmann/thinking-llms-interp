@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import argparse
 import json
+import os
 from tqdm import tqdm
 from utils import utils
 import gc
@@ -74,13 +75,18 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     """
     print_and_flush(f"\nRunning {clustering_method.upper()} clustering experiment...")
     
+    # Define results path and load existing data
+    results_json_path = f'results/vars/{clustering_method}_results_{model_id}_layer{args.layer}.json'
+    existing_results_data = {}
+    if os.path.exists(results_json_path):
+        try:
+            with open(results_json_path, 'r') as f:
+                existing_results_data = json.load(f)
+            print_and_flush(f"Loaded existing results from {results_json_path}")
+        except json.JSONDecodeError:
+            print_and_flush(f"Warning: Could not decode JSON from {results_json_path}. Starting fresh.")
+            
     # For methods that require n_clusters, use the original code
-    accuracy_scores = []
-    f1_scores = []
-    assignment_rates = []
-    orthogonality_scores = []  # Add orthogonality scores
-    precision_scores = []  # Add precision scores
-    recall_scores = []  # Add recall scores
     detailed_results_dict = {}
     
     cluster_range = list(range(args.min_clusters, args.max_clusters + 1))
@@ -102,11 +108,34 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
             args.description_examples,
         )
         
-        # Store metrics
-        accuracy_scores.append(scoring_results['accuracy'])
-        orthogonality_scores.append(scoring_results['orthogonality'])
-        
-        # Calculate average F1 score, precision, and recall across all clusters
+        # Store detailed results
+        detailed_results_dict[n_clusters] = scoring_results
+
+    # Combine with existing results if any
+    merged_detailed_results = existing_results_data.get("detailed_results", {})
+    # Keys from json are strings, convert new keys to strings for merging
+    new_detailed_results_str_keys = {str(k): v for k, v in detailed_results_dict.items()}
+    merged_detailed_results.update(new_detailed_results_str_keys)
+
+    # Re-create sorted cluster range and score lists from merged results
+    final_cluster_range = sorted([int(k) for k in merged_detailed_results.keys()])
+    
+    # If there are no results, return early
+    if not final_cluster_range:
+        print_and_flush("No results to process.")
+        return {}
+
+    # Re-calculate all scores from the merged detailed results
+    final_accuracy_scores = [merged_detailed_results[str(n)]['accuracy'] for n in final_cluster_range]
+    final_orthogonality_scores = [merged_detailed_results[str(n)]['orthogonality'] for n in final_cluster_range]
+    final_assignment_rates = [merged_detailed_results[str(n)].get('assigned_fraction', 0) for n in final_cluster_range]
+
+    final_f1_scores = []
+    final_precision_scores = []
+    final_recall_scores = []
+
+    for n_clusters in final_cluster_range:
+        scoring_results = merged_detailed_results[str(n_clusters)]
         f1_sum = 0.0
         precision_sum = 0.0
         recall_sum = 0.0
@@ -120,47 +149,40 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         avg_f1 = f1_sum / f1_count if f1_count > 0 else 0
         avg_precision = precision_sum / f1_count if f1_count > 0 else 0
         avg_recall = recall_sum / f1_count if f1_count > 0 else 0
-        
-        f1_scores.append(avg_f1)
-        precision_scores.append(avg_precision)
-        recall_scores.append(avg_recall)
-        
-        # Store assignment rate if completeness was run
-        assignment_rates.append(scoring_results.get('assigned_fraction', 0))
-        
-        # Store detailed results
-        detailed_results_dict[n_clusters] = scoring_results
+        final_f1_scores.append(avg_f1)
+        final_precision_scores.append(avg_precision)
+        final_recall_scores.append(avg_recall)
 
-    # Identify optimal number of clusters based on accuracy only
-    optimal_n_clusters = cluster_range[np.argmax(accuracy_scores)]
+    # Re-identify optimal number of clusters based on accuracy
+    optimal_n_clusters = final_cluster_range[np.argmax(final_accuracy_scores)]
 
     # Create a concise results JSON
+    optimal_idx = final_cluster_range.index(optimal_n_clusters)
     results_data = {
         "clustering_method": clustering_method,
         "model_id": model_id,
         "layer": args.layer,
-        "cluster_range": cluster_range,
-        "accuracy_scores": accuracy_scores,
-        "precision_scores": precision_scores,
-        "recall_scores": recall_scores,
-        "f1_scores": f1_scores,
-        "assignment_rates": assignment_rates,
-        "orthogonality_scores": orthogonality_scores,
+        "cluster_range": final_cluster_range,
+        "accuracy_scores": final_accuracy_scores,
+        "precision_scores": final_precision_scores,
+        "recall_scores": final_recall_scores,
+        "f1_scores": final_f1_scores,
+        "assignment_rates": final_assignment_rates,
+        "orthogonality_scores": final_orthogonality_scores,
         "optimal_n_clusters": optimal_n_clusters,
-        "optimal_accuracy": accuracy_scores[cluster_range.index(optimal_n_clusters)],
-        "optimal_precision": precision_scores[cluster_range.index(optimal_n_clusters)],
-        "optimal_recall": recall_scores[cluster_range.index(optimal_n_clusters)],
-        "optimal_f1": f1_scores[cluster_range.index(optimal_n_clusters)],
-        "optimal_assignment_rate": assignment_rates[cluster_range.index(optimal_n_clusters)],
-        "optimal_orthogonality": orthogonality_scores[cluster_range.index(optimal_n_clusters)],
-        "detailed_results": detailed_results_dict
+        "optimal_accuracy": final_accuracy_scores[optimal_idx],
+        "optimal_precision": final_precision_scores[optimal_idx],
+        "optimal_recall": final_recall_scores[optimal_idx],
+        "optimal_f1": final_f1_scores[optimal_idx],
+        "optimal_assignment_rate": final_assignment_rates[optimal_idx],
+        "optimal_orthogonality": final_orthogonality_scores[optimal_idx],
+        "detailed_results": merged_detailed_results
     }
 
     # Convert any numpy types to Python native types for JSON serialization
     results_data = utils.convert_numpy_types(results_data)
     
     # Save results to JSON
-    results_json_path = f'results/vars/{clustering_method}_results_{model_id}_layer{args.layer}.json'
     with open(results_json_path, 'w') as f:
         json.dump(results_data, f, indent=2, cls=utils.NumpyEncoder)
     print_and_flush(f"Saved {clustering_method} results to {results_json_path}")
