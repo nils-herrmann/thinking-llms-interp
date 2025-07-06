@@ -625,6 +625,7 @@ def compute_centroid_orthogonality(cluster_centers):
     float
         Average orthogonality (1 - cosine similarity) between centroids
     """
+    start_time = time.time()
     # First compute cosine similarity (not distance)
     norm_cluster_centers = cluster_centers / np.linalg.norm(cluster_centers, axis=1, keepdims=True)
     # Use dot product for cosine similarity
@@ -644,6 +645,7 @@ def compute_centroid_orthogonality(cluster_centers):
     # Calculate average orthogonality
     avg_orthogonality = np.mean(upper_tri_values) if len(upper_tri_values) > 0 else 0.0
     
+    print_and_flush(f"Computed centroid orthogonality in {time.time() - start_time} seconds")
     return avg_orthogonality
 
 
@@ -720,6 +722,7 @@ def generate_category_descriptions(cluster_centers, texts, cluster_labels, examp
     list
         List of tuples (cluster_id, category_title, category_description)
     """
+    start_time = time.time()
     categories = []
     representative_examples = generate_representative_examples(
         cluster_centers, texts, cluster_labels, example_activations
@@ -744,6 +747,7 @@ def generate_category_descriptions(cluster_centers, texts, cluster_labels, examp
                 print_and_flush(f"Error generating description for cluster {cluster_idx}: {e}")
                 time.sleep(5)
     
+    print_and_flush(f"Generated category descriptions in {time.time() - start_time} seconds")
     return categories
 
 
@@ -768,6 +772,7 @@ def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder
     dict
         Autograder results including precision, recall, accuracy and F1 for each cluster
     """
+    start_time = time.time()
     # Convert cluster_labels to list of strings for compatibility
     str_cluster_labels = [str(label) for label in cluster_labels]
     
@@ -782,6 +787,7 @@ def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder
             time.sleep(5)
     
     print_and_flush(results["avg"])
+    print_and_flush(f"Evaluated clustering accuracy in {time.time() - start_time} seconds")
     return results
 
 def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
@@ -802,6 +808,7 @@ def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
     dict
         Autograder results
     """
+    start_time = time.time()
     # Sample n_test_examples randomly from all texts
     if len(texts) > n_test_examples:
         test_texts = random.sample(texts, n_test_examples)
@@ -817,6 +824,7 @@ def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
             print_and_flush(f"Error running completeness autograder: {e}")
             time.sleep(5)
     
+    print_and_flush(f"Evaluated clustering completeness in {time.time() - start_time} seconds")
     return results
 
 
