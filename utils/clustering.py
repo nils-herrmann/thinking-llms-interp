@@ -392,6 +392,9 @@ Only include the JSON object in your response, with no additional text before or
                 # If all else fails, just try to use the entire response
                 json_str = response
         
+        # Sanitize the JSON string to escape invalid backslash sequences.
+        json_str = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_str)
+        
         result = json.loads(json_str)
         
         # Count the number of sentences assigned to each category and those not assigned
@@ -539,6 +542,9 @@ Only include the JSON object in your response, with no additional text before or
                     # If all else fails, just try to use the entire response
                     json_str = response
             
+            # Sanitize the JSON string to escape invalid backslash sequences.
+            json_str = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_str)
+            
             result = json.loads(json_str)
             
             # Compute metrics for this cluster
@@ -586,6 +592,8 @@ Only include the JSON object in your response, with no additional text before or
         
         except Exception as e:
             print(f"Error in accuracy autograder for cluster {cluster_id}: {e}")
+            import traceback
+            traceback.print_exc()
             print(f"Raw response: {response}")
             results[cluster_id_str] = {
                 "error": str(e),
