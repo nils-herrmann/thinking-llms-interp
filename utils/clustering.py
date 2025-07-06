@@ -11,6 +11,7 @@ import numpy as np
 import pickle
 import time
 import random
+from tqdm import tqdm
 from utils.utils import print_and_flush, chat, convert_numpy_types
 
 
@@ -458,7 +459,7 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model="gpt-4
     sentence_to_cluster = {i: label for i, label in enumerate(ground_truth_labels)}
     
     # For each category, evaluate independently
-    for cluster_id, title, description in categories:
+    for cluster_id, title, description in tqdm(categories, desc="Evaluating category accuracy"):
         cluster_id_str = str(cluster_id)
         
         # Find all examples in this cluster and not in this cluster
@@ -671,7 +672,7 @@ def generate_representative_examples(cluster_centers, texts, cluster_labels, exa
     """
     representative_examples = {}
     
-    for cluster_idx in range(len(cluster_centers)):
+    for cluster_idx in tqdm(range(len(cluster_centers)), desc="Generating representative examples"):
         # Get indices of texts in this cluster
         cluster_indices = np.where(cluster_labels == cluster_idx)[0]
         
@@ -728,7 +729,7 @@ def generate_category_descriptions(cluster_centers, texts, cluster_labels, examp
         cluster_centers, texts, cluster_labels, example_activations
     )
     
-    for cluster_idx in range(len(cluster_centers)):
+    for cluster_idx in tqdm(range(len(cluster_centers)), desc="Generating category descriptions"):
         # Skip empty clusters
         if len(representative_examples[cluster_idx]) == 0:
             continue
@@ -886,7 +887,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
 
     # Create detailed results by cluster
     detailed_results = {}
-    for cluster_id, title, description in categories:
+    for cluster_id, title, description in tqdm(categories, desc="Creating detailed results"):
         cluster_id_str = str(cluster_id)
         cluster_metrics = accuracy_results.get(cluster_id_str, {})
         cluster_idx = int(cluster_id)
