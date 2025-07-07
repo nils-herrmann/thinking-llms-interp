@@ -12,7 +12,7 @@ import pickle
 import time
 import random
 from tqdm import tqdm
-from utils.utils import print_and_flush, chat, convert_numpy_types
+from utils.utils import print_and_flush, chat, chat_batch, convert_numpy_types
 
 
 def load_trained_clustering_data(model_id, layer, n_clusters, method):
@@ -310,6 +310,110 @@ Avoid overly general descriptions. Be precise enough that someone could reliably
     
     return title, description
 
+def generate_cluster_descriptions_batch(cluster_examples_list, model="gpt-4.1", n_trace_examples=0, model_name=None):
+    """
+    Generate descriptions for multiple clusters in batch.
+    
+    Args:
+        cluster_examples_list (list): List of tuples (cluster_idx, examples) for each cluster
+        model (str): Model to use for generating descriptions
+        n_trace_examples (int): Number of full reasoning trace examples to include in prompts
+        model_name (str): Name of the model whose responses should be loaded for trace examples
+        
+    Returns:
+        list: List of tuples (cluster_idx, title, description) for each cluster
+    """
+    # Prepare trace examples if requested (shared across all clusters)
+    trace_examples_text = ""
+    if n_trace_examples > 0 and model_name is not None:
+        try:
+            # Get model identifier for file naming
+            model_id = model_name.split('/')[-1].lower()
+            responses_json_path = f"../generate-responses/results/vars/responses_{model_id}.json"
+            
+            # Load responses
+            with open(responses_json_path, 'r') as f:
+                responses_data = json.load(f)
+            
+            # Select random examples
+            trace_samples = random.sample(responses_data, min(n_trace_examples, len(responses_data)))
+            
+            # Extract thinking processes
+            trace_examples = []
+            for sample in trace_samples:
+                if sample.get("thinking_process"):
+                    trace_examples.append(sample["thinking_process"])
+            
+            if trace_examples:
+                trace_examples_text = "Here are some full reasoning traces to help understand the context:\n'''\n"
+                for i, trace in enumerate(trace_examples):
+                    trace_examples_text += f"TRACE {i+1}:\n{trace}\n\n"
+                trace_examples_text += "'''"
+        except Exception as e:
+            print(f"Error loading trace examples: {e}")
+    
+    # Create prompts for all clusters
+    batch_prompts = []
+    cluster_indices = []
+    
+    for cluster_idx, examples in cluster_examples_list:
+        # Create a prompt for this cluster
+        prompt = f"""Analyze the following {len(examples)} sentences from an LLM reasoning trace. These sentences are grouped into a cluster based on their similar role or function in the reasoning process.
+
+Your task is to identify the precise cognitive function these sentences serve in the reasoning process. Consider:
+1. The reasoning strategy or cognitive operation being performed
+2. Whether these sentences tend to appear in a specific position in reasoning (if applicable)
+
+{trace_examples_text}
+
+Examples:
+'''
+{chr(10).join([f"- {example}" for example in examples])}
+'''
+
+Look for:
+- Shared reasoning strategies or cognitive mechanisms
+- Common linguistic patterns or structures
+- Positional attributes (only if clearly evident)
+- Functional role within the overall reasoning process
+
+Your response should be in this exact format:
+Title: [concise title naming the specific reasoning function]
+Description: [2-3 sentences explaining (1) what this function does, (2) what is INCLUDED and NOT INCLUDED in this category, and (3) position in reasoning if relevant]
+
+Avoid overly general descriptions. Be precise enough that someone could reliably identify new examples of this reasoning function.
+"""
+        
+        batch_prompts.append(prompt)
+        cluster_indices.append(cluster_idx)
+    
+    # Process all prompts in batch
+    print(f"Processing {len(batch_prompts)} cluster description prompts in batch...")
+    # Run the async batch processing
+    import asyncio
+    responses = asyncio.run(chat_batch(batch_prompts, model=model))
+    
+    # Parse responses to extract titles and descriptions
+    results = []
+    for i, response in enumerate(responses):
+        cluster_idx = cluster_indices[i]
+        
+        # Parse the response to extract title and description
+        title = "Unnamed Cluster"
+        description = "No description available"
+        
+        title_match = re.search(r"Title:\s*(.*?)(?:\n|$)", response)
+        if title_match:
+            title = title_match.group(1).strip()
+            
+        desc_match = re.search(r"Description:\s*(.*?)(?:\n|$)", response)
+        if desc_match:
+            description = desc_match.group(1).strip()
+        
+        results.append((str(cluster_idx), title, description))
+    
+    return results
+
 def simplify_category_name(category_name):
     """
     Simplify a category name by extracting just the number if it matches 'Category N'
@@ -461,8 +565,12 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model="gpt-4
     # Get a mapping from sentence index to cluster ID for easy lookup
     sentence_to_cluster = {i: label for i, label in enumerate(ground_truth_labels)}
     
-    # For each category, evaluate independently
-    for cluster_id, title, description in tqdm(categories, desc="Evaluating category accuracy"):
+    # Collect all prompts and metadata for batch processing
+    batch_prompts = []
+    batch_metadata = []
+    
+    # For each category, prepare data and prompts
+    for cluster_id, title, description in tqdm(categories, desc="Preparing batch prompts"):
         cluster_id_str = str(cluster_id)
         
         # Find all examples in this cluster and not in this cluster
@@ -522,8 +630,30 @@ Your response must follow this exact JSON format:
 Only include the JSON object in your response, with no additional text before or after.
 """
         
-        # Call the chat API to get the classification results
-        response = chat(prompt, model=model)
+        # Add prompt and metadata to batch
+        batch_prompts.append(prompt)
+        batch_metadata.append({
+            "cluster_id": cluster_id,
+            "cluster_id_str": cluster_id_str,
+            "title": title,
+            "description": description,
+            "test_sentences": test_sentences,
+            "test_ground_truth": test_ground_truth
+        })
+    
+    # Process all prompts in batch
+    print(f"Processing {len(batch_prompts)} prompts in batch...")
+    # Run the async batch processing
+    import asyncio
+    responses = asyncio.run(chat_batch(batch_prompts, model=model))
+    
+    # Process all responses
+    for i, response in enumerate(responses):
+        metadata = batch_metadata[i]
+        cluster_id = metadata["cluster_id"]
+        cluster_id_str = metadata["cluster_id_str"]
+        test_sentences = metadata["test_sentences"]
+        test_ground_truth = metadata["test_ground_truth"]
         
         # Parse the response to extract the JSON
         try:
@@ -732,29 +862,27 @@ def generate_category_descriptions(cluster_centers, texts, cluster_labels, examp
         List of tuples (cluster_id, category_title, category_description)
     """
     start_time = time.time()
-    categories = []
     representative_examples = generate_representative_examples(
         cluster_centers, texts, cluster_labels, example_activations
     )
     
-    for cluster_idx in tqdm(range(len(cluster_centers)), desc="Generating category descriptions"):
+    # Prepare batch data for all non-empty clusters
+    cluster_examples_list = []
+    for cluster_idx in range(len(cluster_centers)):
         # Skip empty clusters
         if len(representative_examples[cluster_idx]) == 0:
             continue
-
+        
         # Get top examples
         examples = representative_examples[cluster_idx][:n_description_examples]
+        cluster_examples_list.append((cluster_idx, examples))
     
-        # Generate title and description
-        for _ in range(3):
-            try:
-                title, description = generate_cluster_description(examples, model_name=model_name, n_trace_examples=3)
-                categories.append((str(cluster_idx), title, description))
-                break
-            except Exception as e:
-                # Fallback to simple description
-                print_and_flush(f"Error generating description for cluster {cluster_idx}: {e}")
-                time.sleep(5)
+    # Generate descriptions in batch
+    categories = generate_cluster_descriptions_batch(
+        cluster_examples_list, 
+        model_name=model_name, 
+        n_trace_examples=3
+    )
     
     print_and_flush(f"Generated category descriptions in {time.time() - start_time} seconds")
     return categories

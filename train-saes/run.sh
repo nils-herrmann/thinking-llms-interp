@@ -1,5 +1,5 @@
-MIN_CLUSTERS=51
-MAX_CLUSTERS=56
+MIN_CLUSTERS=57
+MAX_CLUSTERS=64
 N_EXAMPLES=100000  # all responses
 CLUSTERING_METHODS="gmm pca_gmm spherical_kmeans pca_kmeans agglomerative pca_agglomerative sae_topk"
 
