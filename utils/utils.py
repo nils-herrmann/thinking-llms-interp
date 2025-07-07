@@ -13,6 +13,17 @@ import sys
 import os
 import random
 from tqdm import tqdm
+import asyncio
+sys.path.append('/root/chat-limiter')
+from chat_limiter import (
+    ChatLimiter, 
+    Message, 
+    MessageRole, 
+    ChatCompletionRequest,
+    process_chat_completion_batch,
+    create_chat_completion_requests,
+    BatchConfig
+)
 
 def print_and_flush(message):
     """Prints a message and flushes stdout."""
@@ -146,6 +157,63 @@ def chat(prompt, model="gpt-4.1", max_tokens=28000):
             time.sleep(20)
 
     return None
+
+async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_requests=50, max_retries_per_item=3):
+    """
+    Process a batch of prompts using the chat_limiter library for parallel processing.
+    
+    Args:
+        prompts (list): List of prompts to process
+        model (str): Model to use for the chat
+        max_tokens (int): Maximum number of tokens per response
+        max_concurrent_requests (int): Maximum number of concurrent requests
+        max_retries_per_item (int): Maximum number of retries per item
+        
+    Returns:
+        list: List of responses corresponding to the prompts
+    """
+    # Create chat completion requests
+    requests = create_chat_completion_requests(
+        model=model,
+        prompts=prompts,
+        max_tokens=max_tokens,
+        temperature=1e-19
+    )
+    
+    # Configure batch processing
+    config = BatchConfig(
+        max_concurrent_requests=max_concurrent_requests,
+        max_retries_per_item=max_retries_per_item,
+        group_by_model=True
+    )
+    
+    # Process batch
+    async with ChatLimiter.for_model(model) as limiter:
+        results = await process_chat_completion_batch(limiter, requests, config)
+    
+    # Extract responses and handle errors
+    responses = []
+    for i, result in enumerate(results):
+        if result.success:
+            # Handle different response formats based on model
+            response = result.result
+            if hasattr(response, 'choices') and response.choices:
+                content = response.choices[0].message.content
+                # Handle thinking models that might have reasoning
+                if hasattr(response.choices[0].message, 'reasoning') and response.choices[0].message.reasoning:
+                    thinking_response = response.choices[0].message.reasoning
+                    responses.append(f"<think>{thinking_response}\n</think>\n{content}")
+                else:
+                    responses.append(content)
+            else:
+                responses.append(str(response))
+        else:
+            # Fallback to individual chat call for failed requests
+            print(f"Batch request {i} failed: {result.error}. Falling back to individual chat call.")
+            fallback_response = chat(prompts[i], model=model, max_tokens=max_tokens)
+            responses.append(fallback_response)
+    
+    return responses
 
 def get_char_to_token_map(text, tokenizer):
     """Create a mapping from character positions to token positions"""
