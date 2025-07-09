@@ -66,40 +66,44 @@ def visualize_results(results_json_path):
     layer = results['layer']
     method = results['clustering_method']
     
-    # Create figure with 2x2 subplots
-    fig, axs = plt.subplots(2, 2, figsize=(15, 12))
+    # Create figure with 3x2 subplots
+    fig, axs = plt.subplots(3, 2, figsize=(15, 18))
     
     # Define x-coordinates for vertical lines
     vertical_lines_x = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
     
-    # Accuracy
-    axs[0, 0].plot(cluster_range, accuracy_scores, 'o-', color='green')
+    # Calculate final score (cluster score from analyze-clusters.py)
+    final_scores = [(f1 + assignment + orthogonality) / 3 
+                   for f1, assignment, orthogonality in zip(f1_scores, assignment_rates, orthogonality_scores)]
+    
+    # Final Score (combined metric) - Top Left
+    axs[0, 0].plot(cluster_range, final_scores, 'o-', color='blue')
     axs[0, 0].set_xlabel('Number of Clusters')
-    axs[0, 0].set_ylabel('Accuracy')
-    axs[0, 0].set_title('Autograder Accuracy vs. Number of Clusters')
+    axs[0, 0].set_ylabel('Final Score')
+    axs[0, 0].set_title('Final Score vs. Number of Clusters')
     axs[0, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[0, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
-    # F1 Score
-    axs[0, 1].plot(cluster_range, f1_scores, 'o-', color='red')
+    # Accuracy - Top Right
+    axs[0, 1].plot(cluster_range, accuracy_scores, 'o-', color='green')
     axs[0, 1].set_xlabel('Number of Clusters')
-    axs[0, 1].set_ylabel('Average F1 Score')
-    axs[0, 1].set_title('Average F1 Score vs. Number of Clusters')
+    axs[0, 1].set_ylabel('Accuracy')
+    axs[0, 1].set_title('Autograder Accuracy vs. Number of Clusters')
     axs[0, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[0, 1].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
-    # Assignment Rate
-    axs[1, 0].plot(cluster_range, assignment_rates, 'o-', color='purple')
+    # F1 Score - Middle Left
+    axs[1, 0].plot(cluster_range, f1_scores, 'o-', color='red')
     axs[1, 0].set_xlabel('Number of Clusters')
-    axs[1, 0].set_ylabel('Assignment Rate')
-    axs[1, 0].set_title('Completeness: Assignment Rate vs. Number of Clusters')
+    axs[1, 0].set_ylabel('Average F1 Score')
+    axs[1, 0].set_title('Average F1 Score vs. Number of Clusters')
     axs[1, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[1, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
-    # Centroid Orthogonality
+    # Centroid Orthogonality - Middle Right
     axs[1, 1].plot(cluster_range, orthogonality_scores, 'o-', color='orange')
     axs[1, 1].set_xlabel('Number of Clusters')
     axs[1, 1].set_ylabel('Orthogonality')
@@ -107,6 +111,18 @@ def visualize_results(results_json_path):
     axs[1, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[1, 1].axvline(x=x, color='red', linestyle='--', alpha=0.15)
+    
+    # Assignment Rate (Completeness) - Bottom Left
+    axs[2, 0].plot(cluster_range, assignment_rates, 'o-', color='purple')
+    axs[2, 0].set_xlabel('Number of Clusters')
+    axs[2, 0].set_ylabel('Assignment Rate')
+    axs[2, 0].set_title('Completeness: Assignment Rate vs. Number of Clusters')
+    axs[2, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    for x in vertical_lines_x:
+        axs[2, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
+    
+    # Hide the empty subplot in the bottom-right
+    axs[2, 1].axis('off')
     
     # Add overall title
     method_name = method.capitalize()
