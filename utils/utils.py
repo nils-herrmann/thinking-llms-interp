@@ -12,6 +12,7 @@ import numpy as np
 import sys
 import os
 import random
+import pickle
 from tqdm import tqdm
 import asyncio
 from chat_limiter import (
@@ -229,10 +230,20 @@ def get_char_to_token_map(text, tokenizer):
 
 def process_saved_responses(model_name, n_examples, model, tokenizer, layer):
     """Load and process saved responses to get activations"""
+    
+    # Create filename for caching based on parameters
+    model_id = model_name.split('/')[-1].lower()
+    pickle_filename = f"../generate-responses/results/vars/activations_{model_id}_{n_examples}_{layer}.pkl"
+    
+    # Check if cached file exists
+    if os.path.exists(pickle_filename):
+        print(f"Loading cached activations from {pickle_filename}...")
+        with open(pickle_filename, 'rb') as f:
+            return pickle.load(f)
+    
     print(f"Processing saved responses for {model_name}...")
     
     # Load model and tokenizer
-    model_id = model_name.split('/')[-1].lower()
     responses_json_path = f"../generate-responses/results/vars/responses_{model_id}.json"
     
     print(f"Loading responses from {responses_json_path}...")
@@ -296,10 +307,10 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer):
                         max_token_end = token_end
 
                     # Extract activations for this segment
-                    segment_activations = layer_outputs[:, token_start-1:token_end, :].mean(dim=1).cpu()  # Average over tokens
+                    segment_activations = layer_outputs[:, token_start-1:token_end, :].mean(dim=1).cpu().numpy()  # Average over tokens
                                         
                     # Save the result
-                    all_activations.append(segment_activations)  # Store as torch tensor
+                    all_activations.append(segment_activations)  # Store as numpy array
                     all_texts.append(sentence)
     
         if min_token_start < layer_outputs.shape[1] and max_token_end > 0:
@@ -308,6 +319,15 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer):
             overall_running_count += 1
 
     print(f"Found {len(all_activations)} sentences with activations across {overall_running_count} examples")
+
+    # Convert overall_running_mean to numpy as well
+    overall_running_mean = overall_running_mean.cpu().numpy()
+    
+    # Save to pickle file
+    result = (all_activations, all_texts, overall_running_mean)
+    with open(pickle_filename, 'wb') as f:
+        pickle.dump(result, f)
+    print(f"Saved activations to {pickle_filename}")
 
     return all_activations, all_texts, overall_running_mean
 
