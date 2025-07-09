@@ -310,7 +310,7 @@ Avoid overly general descriptions. Be precise enough that someone could reliably
     
     return title, description
 
-def generate_cluster_descriptions_batch(cluster_examples_list, model="gpt-4.1", n_trace_examples=0, model_name=None):
+def generate_cluster_descriptions(cluster_examples_list, model="gpt-4.1", n_trace_examples=0, model_name=None):
     """
     Generate descriptions for multiple clusters in batch.
     
@@ -391,7 +391,25 @@ Avoid overly general descriptions. Be precise enough that someone could reliably
     print(f"Processing {len(batch_prompts)} cluster description prompts in batch...")
     # Run the async batch processing
     import asyncio
-    responses = asyncio.run(chat_batch(batch_prompts, model=model))
+    
+    # Handle both Jupyter (with running event loop) and regular scripts
+    try:
+        # Check if there's already a running event loop
+        loop = asyncio.get_running_loop()
+        # If we get here, we're in an environment with a running loop (like Jupyter)
+        # We need to create a task and run it
+        import concurrent.futures
+        import threading
+        
+        def run_in_thread():
+            return asyncio.run(chat_batch(batch_prompts, model=model))
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_thread)
+            responses = future.result()
+    except RuntimeError:
+        # No running event loop, safe to use asyncio.run()
+        responses = asyncio.run(chat_batch(batch_prompts, model=model))
     
     # Parse responses to extract titles and descriptions
     results = []
@@ -546,7 +564,7 @@ Only include the JSON object in your response, with no additional text before or
             "raw_response": response
         }
 
-def accuracy_autograder(sentences, categories, ground_truth_labels, model="gpt-4.1", n_autograder_examples=30):
+def accuracy_autograder(sentences, categories, ground_truth_labels, model="gpt-4.1", n_autograder_examples=100):
     """
     Binary autograder that evaluates each cluster independently against examples from outside the cluster.
     
@@ -619,8 +637,8 @@ Your response must follow this exact JSON format:
   "classifications": [
     {{
       "sentence_id": <sentence idx>,
-      "belongs_to_category": "Yes" or "No",
-      "explanation": "Brief explanation of your reasoning"
+      "explanation": "Brief explanation of your reasoning",
+      "belongs_to_category": "Yes" or "No"
     }},
     ... (repeat for all sentences)
   ]
@@ -638,14 +656,33 @@ Only include the JSON object in your response, with no additional text before or
             "title": title,
             "description": description,
             "test_sentences": test_sentences,
-            "test_ground_truth": test_ground_truth
+            "test_ground_truth": test_ground_truth,
+            "test_indices": test_indices  # Store original indices for reference
         })
     
     # Process all prompts in batch
     print(f"Processing {len(batch_prompts)} prompts in batch...")
     # Run the async batch processing
     import asyncio
-    responses = asyncio.run(chat_batch(batch_prompts, model=model))
+    
+    # Handle both Jupyter (with running event loop) and regular scripts
+    try:
+        # Check if there's already a running event loop
+        loop = asyncio.get_running_loop()
+        # If we get here, we're in an environment with a running loop (like Jupyter)
+        # We need to create a task and run it
+        import concurrent.futures
+        import threading
+        
+        def run_in_thread():
+            return asyncio.run(chat_batch(batch_prompts, model=model))
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_thread)
+            responses = future.result()
+    except RuntimeError:
+        # No running event loop, safe to use asyncio.run()
+        responses = asyncio.run(chat_batch(batch_prompts, model=model))
     
     # Process all responses
     for i, response in enumerate(responses):
@@ -685,6 +722,8 @@ Only include the JSON object in your response, with no additional text before or
             
             predictions = []
             
+            # Add sentence texts to classifications for detailed analysis
+            enhanced_classifications = []
             for item in result["classifications"]:
                 sentence_idx = item["sentence_id"]
                 belongs = item["belongs_to_category"]
@@ -700,6 +739,12 @@ Only include the JSON object in your response, with no additional text before or
                     false_negatives += 1
                 elif belongs == "No" and true_label == "No":
                     true_negatives += 1
+                
+                # Create enhanced classification with sentence text and ground truth
+                enhanced_item = item.copy()
+                enhanced_item["sentence_text"] = test_sentences[sentence_idx]
+                enhanced_item["ground_truth"] = true_label
+                enhanced_classifications.append(enhanced_item)
             
             # Calculate metrics
             accuracy = (true_positives + true_negatives) / len(test_sentences) if test_sentences else 0
@@ -717,7 +762,7 @@ Only include the JSON object in your response, with no additional text before or
                 "true_negatives": true_negatives,
                 "false_negatives": false_negatives,
                 "predictions": predictions,
-                "classifications": result["classifications"]
+                "classifications": enhanced_classifications  # Use enhanced classifications with sentence texts
             }
         
         except Exception as e:
@@ -817,6 +862,7 @@ def generate_representative_examples(cluster_centers, texts, cluster_labels, exa
         # Skip empty clusters
         if len(cluster_indices) == 0:
             representative_examples[cluster_idx] = []
+            print_and_flush(f"WARNING:Skipping empty cluster {cluster_idx}")
             continue
             
         # Get all examples in this cluster
@@ -879,7 +925,7 @@ def generate_category_descriptions(cluster_centers, texts, cluster_labels, examp
         cluster_examples_list.append((cluster_idx, examples))
     
     # Generate descriptions in batch
-    categories = generate_cluster_descriptions_batch(
+    categories = generate_cluster_descriptions(
         cluster_examples_list, 
         model_name=model_name, 
         n_trace_examples=3
@@ -889,7 +935,7 @@ def generate_category_descriptions(cluster_centers, texts, cluster_labels, examp
     return categories
 
 
-def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder_examples=5):
+def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder_examples):
     """
     Evaluate clustering using the binary accuracy autograder.
     Tests each cluster independently against examples from other clusters.
