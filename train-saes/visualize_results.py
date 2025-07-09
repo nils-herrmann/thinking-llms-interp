@@ -69,12 +69,17 @@ def visualize_results(results_json_path):
     # Create figure with 2x2 subplots
     fig, axs = plt.subplots(2, 2, figsize=(15, 12))
     
+    # Define x-coordinates for vertical lines
+    vertical_lines_x = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+    
     # Accuracy
     axs[0, 0].plot(cluster_range, accuracy_scores, 'o-', color='green')
     axs[0, 0].set_xlabel('Number of Clusters')
     axs[0, 0].set_ylabel('Accuracy')
     axs[0, 0].set_title('Autograder Accuracy vs. Number of Clusters')
     axs[0, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    for x in vertical_lines_x:
+        axs[0, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
     # F1 Score
     axs[0, 1].plot(cluster_range, f1_scores, 'o-', color='red')
@@ -82,6 +87,8 @@ def visualize_results(results_json_path):
     axs[0, 1].set_ylabel('Average F1 Score')
     axs[0, 1].set_title('Average F1 Score vs. Number of Clusters')
     axs[0, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    for x in vertical_lines_x:
+        axs[0, 1].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
     # Assignment Rate
     axs[1, 0].plot(cluster_range, assignment_rates, 'o-', color='purple')
@@ -89,6 +96,8 @@ def visualize_results(results_json_path):
     axs[1, 0].set_ylabel('Assignment Rate')
     axs[1, 0].set_title('Completeness: Assignment Rate vs. Number of Clusters')
     axs[1, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    for x in vertical_lines_x:
+        axs[1, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
     # Centroid Orthogonality
     axs[1, 1].plot(cluster_range, orthogonality_scores, 'o-', color='orange')
@@ -96,6 +105,8 @@ def visualize_results(results_json_path):
     axs[1, 1].set_ylabel('Orthogonality')
     axs[1, 1].set_title('Centroid Orthogonality vs. Number of Clusters')
     axs[1, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    for x in vertical_lines_x:
+        axs[1, 1].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
     # Add overall title
     method_name = method.capitalize()
