@@ -173,7 +173,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
         model=model,
         prompts=prompts,
         max_tokens=max_tokens,
-        # temperature=1e-19,
+        temperature=1e-19,
     )
     
     # Configure batch processing
@@ -181,7 +181,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
         max_concurrent_requests=max_concurrent_requests,
         max_retries_per_item=max_retries_per_item,
         group_by_model=True,
-        # verbose=True
+        verbose=True
     )
     
     # Process batch with increased timeout for reliability
@@ -191,6 +191,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
     # Extract responses and handle errors
     responses = []
     for i, result in enumerate(results):
+        # print(f"Batch request {i} result: {result}")
         if result.success:
             # Handle different response formats based on model
             response = result.result

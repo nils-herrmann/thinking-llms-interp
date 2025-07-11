@@ -48,12 +48,12 @@ print(f"Clustering method: {CLUSTERING_METHOD}")
 
 # Clustering evaluation config
 MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS = "o3"
-N_DESCRIPTION_EXAMPLES = 50
+N_DESCRIPTION_EXAMPLES = 200
 
 MODEL_NAME_FOR_COMPLETENESS_EVALUATION = "gpt-4.1"
-N_COMPLETENESS_EXAMPLES = 50
+N_COMPLETENESS_EXAMPLES = 500
 
-MODEL_NAME_FOR_ACCURACY_EVALUATION = "gpt-4.1"
+MODEL_NAME_FOR_ACCURACY_EVALUATION = "o3"
 N_ACCURACY_EXAMPLES = 100
 
 # %%
@@ -210,7 +210,13 @@ for cluster_idx in sorted(representative_examples.keys()):
 # Generate category descriptions
 print("Generating category descriptions...")
 categories = generate_category_descriptions(
-    cluster_centers, MODEL_NAME, MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS, N_DESCRIPTION_EXAMPLES, representative_examples
+    cluster_centers, 
+    MODEL_NAME, 
+    MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS, 
+    N_DESCRIPTION_EXAMPLES, 
+    representative_examples,
+    n_trace_examples=0,
+    n_categories_examples=5
 )
 
 print("Generated category descriptions:")
@@ -219,10 +225,75 @@ for cluster_id, title, description in categories:
     print(f"  Title: {title}")
     print(f"  Description: {description}")
 
+title_by_cluster = {cluster_id: title for cluster_id, title, description in categories}
+
 # %%
 print("Running completeness evaluation...")
-completeness_results = evaluate_clustering_completeness(all_texts, categories, MODEL_NAME_FOR_COMPLETENESS_EVALUATION, N_COMPLETENESS_EXAMPLES)
+completeness_results = evaluate_clustering_completeness(
+    all_texts,
+    categories,
+    MODEL_NAME_FOR_COMPLETENESS_EVALUATION,
+    N_COMPLETENESS_EXAMPLES,
+    [str(label) for label in cluster_labels]
+)
 print(f"Completeness results: {completeness_results}")
+
+# %%
+# Display detailed completeness analysis
+print("\n" + "="*80)
+print("DETAILED COMPLETENESS ANALYSIS")
+print("="*80)
+print("Shows detailed breakdown of how sentences were assigned during completeness evaluation")
+
+if "detailed_analysis" in completeness_results:
+    detailed_analysis = completeness_results["detailed_analysis"]
+    completeness_metrics = completeness_results.get("completeness_metrics", {})
+    
+    print(f"\n{'='*60}")
+    print(f"COMPLETENESS METRICS SUMMARY")
+    print(f"{'='*60}")
+    print(f"Total sentences evaluated: {completeness_results['total_sentences']}")
+    print(f"Assignment accuracy: {completeness_metrics.get('assignment_accuracy', 0):.4f}")
+    print(f"Assignment recall: {completeness_metrics.get('assignment_recall', 0):.4f}")
+    print(f"Assignment precision: {completeness_metrics.get('assignment_precision', 0):.4f}")
+    
+    print(f"\nCorrect assignments: {completeness_metrics.get('correct_assignments', 0)}")
+    print(f"Incorrect assignments: {completeness_metrics.get('incorrect_assignments', 0)}")
+    print(f"Missed assignments: {completeness_metrics.get('missed_assignments', 0)}")
+    print(f"Spurious assignments: {completeness_metrics.get('spurious_assignments', 0)}")
+    print(f"Correctly unassigned: {completeness_metrics.get('unassigned_correctly', 0)}")
+    
+    # Show examples of each type
+    print(f"\n🟢 CORRECT ASSIGNMENTS ({len(detailed_analysis['correct_assignments'])}): Assigned to correct category")
+    enumeration_length = 100
+    for i, item in enumerate(detailed_analysis['correct_assignments'][:enumeration_length]):
+        print(item)
+        ground_truth_category_id = item['ground_truth_category']
+        assigned_category_id = item['assigned_category'].split(" ")[1]
+        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} ({title_by_cluster[str(assigned_category_id)]})")
+        print(f"     Explanation: {item['explanation']}")
+        print(f"     Text: {item['sentence_text']}")
+    if len(detailed_analysis['correct_assignments']) > enumeration_length:
+        print(f"     ... and {len(detailed_analysis['correct_assignments']) - enumeration_length} more")
+    
+    print(f"\n🔴 MISSED ASSIGNMENTS ({len(detailed_analysis['missed_assignments'])}): Should have been assigned but weren't")
+    for i, item in enumerate(detailed_analysis['missed_assignments'][:enumeration_length]):
+        ground_truth_category_id = item['ground_truth_category']
+        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']}")
+        print(f"     Explanation: {item['explanation']}")
+        print(f"     Text: {item['sentence_text']}")
+    if len(detailed_analysis['missed_assignments']) > enumeration_length:
+        print(f"     ... and {len(detailed_analysis['missed_assignments']) - enumeration_length} more")
+    
+    print(f"\n🟡 INCORRECT ASSIGNMENTS ({len(detailed_analysis['incorrect_assignments'])}): Assigned to wrong category")
+    for i, item in enumerate(detailed_analysis['incorrect_assignments'][:enumeration_length]):
+        ground_truth_category_id = item['ground_truth_category']
+        assigned_category_id = item['assigned_category'].split(" ")[1]
+        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} ({title_by_cluster[str(assigned_category_id)]})")
+        print(f"     Explanation: {item['explanation']}")
+        print(f"     Text: {item['sentence_text']}")
+    if len(detailed_analysis['incorrect_assignments']) > enumeration_length:
+        print(f"     ... and {len(detailed_analysis['incorrect_assignments']) - enumeration_length} more")
 
 # %%
 # Run accuracy evaluation (binary autograder)
@@ -230,14 +301,6 @@ print("Running accuracy evaluation...")
 accuracy_results = evaluate_clustering_accuracy(
     all_texts, cluster_labels, categories, MODEL_NAME_FOR_ACCURACY_EVALUATION, N_ACCURACY_EXAMPLES
 )
-
-print("Accuracy evaluation results:")
-if "avg" in accuracy_results:
-    avg_results = accuracy_results["avg"]
-    print(f"  Average accuracy: {avg_results['accuracy']:.4f}")
-    print(f"  Average precision: {avg_results['precision']:.4f}")
-    print(f"  Average recall: {avg_results['recall']:.4f}")
-    print(f"  Average F1: {avg_results['f1']:.4f}")
 
 print("\nPer-cluster results:")
 for cluster_id, title, description in categories:
@@ -248,6 +311,14 @@ for cluster_id, title, description in categories:
         print(f"    Precision: {results.get('precision', 0):.4f}")
         print(f"    Recall: {results.get('recall', 0):.4f}")
         print(f"    F1: {results.get('f1', 0):.4f}")
+
+print("Accuracy evaluation results:")
+if "avg" in accuracy_results:
+    avg_results = accuracy_results["avg"]
+    print(f"  Average accuracy: {avg_results['accuracy']:.4f}")
+    print(f"  Average precision: {avg_results['precision']:.4f}")
+    print(f"  Average recall: {avg_results['recall']:.4f}")
+    print(f"  Average F1: {avg_results['f1']:.4f}")
 
 # %%
 # Display detailed classification results for each cluster
@@ -302,29 +373,31 @@ for cluster_id, title, description in categories:
     
     # Display results
     print(f"\n🟢 TRUE POSITIVES ({len(true_positives)}): Correctly identified as belonging to cluster")
-    for i, (sentence_text, explanation) in enumerate(true_positives[:5]):  # Show first 5
+    enumeration_length = 5
+    for i, (sentence_text, explanation) in enumerate(true_positives[:enumeration_length]):
         print(f"  {i+1}. {explanation}")
         print(f"     Text: {sentence_text}")
-    if len(true_positives) > 5:
-        print(f"     ... and {len(true_positives) - 5} more")
+    if len(true_positives) > enumeration_length:
+        print(f"     ... and {len(true_positives) - enumeration_length} more")
     
     print(f"\n🔴 FALSE NEGATIVES ({len(false_negatives)}): Incorrectly identified as NOT belonging to cluster")
-    for i, (sentence_text, explanation) in enumerate(false_negatives[:5]):  # Show first 5
+    for i, (sentence_text, explanation) in enumerate(false_negatives[:enumeration_length]):
         print(f"  {i+1}. {explanation}")
         print(f"     Text: {sentence_text}")
-    if len(false_negatives) > 5:
-        print(f"     ... and {len(false_negatives) - 5} more")
+    if len(false_negatives) > enumeration_length:
+        print(f"     ... and {len(false_negatives) - enumeration_length} more")
     
     print(f"\n🟢 TRUE NEGATIVES ({len(true_negatives)}): Correctly identified as NOT belonging to cluster")
-    for i, (sentence_text, explanation) in enumerate(true_negatives[:3]):  # Show first 3
+    for i, (sentence_text, explanation) in enumerate(true_negatives[:enumeration_length]):  # Show first 3
         print(f"  {i+1}. {explanation}")
         print(f"     Text: {sentence_text}")
-    if len(true_negatives) > 3:
-        print(f"     ... and {len(true_negatives) - 3} more")
+    if len(true_negatives) > enumeration_length:
+        print(f"     ... and {len(true_negatives) - enumeration_length} more")
     
     print(f"\n🔴 FALSE POSITIVES ({len(false_positives)}): Incorrectly identified as belonging to cluster")
-    for i, (sentence_text, explanation) in enumerate(false_positives[:3]):  # Show first 3
+    for i, (sentence_text, explanation) in enumerate(false_positives[:enumeration_length]):  # Show first 3
         print(f"  {i+1}. {explanation}")
         print(f"     Text: {sentence_text}")
-    if len(false_positives) > 3:
-        print(f"     ... and {len(false_positives) - 3} more")
+    if len(false_positives) > enumeration_length:
+        print(f"     ... and {len(false_positives) - enumeration_length} more")
+# %%

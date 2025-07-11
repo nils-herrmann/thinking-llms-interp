@@ -15,6 +15,277 @@ from tqdm import tqdm
 from utils.utils import print_and_flush, chat, chat_batch, convert_numpy_types
 
 
+categories_examples = [
+    {
+        'title': 'Hypothesis Generation',
+        'description': (
+            'These sentences introduce a tentative explanation or causal link that could account for '
+            'the facts already stated, guiding the rest of the reasoning toward testing or refinement. '
+            'Included are speculative "maybe" or "could be" statements that present a single, coherent '
+            'possibility, often signaled by modals ("might", "could") or framing phrases ("one explanation is").'
+        ),
+        'examples': [
+            'A likely explanation is that the anomaly arises from sensor drift rather than genuine temperature change.',
+            'One possibility is that the agent over-optimizes for short-term reward, ignoring the long-term penalty.',
+            'It could be that the unexpected output stems from an off-by-one error in the loop index.',
+            "Perhaps the model's poor performance results from covariate shift between the training and test datasets.",
+            'A plausible reason is that memory fragmentation slows allocation as the program runs.',
+        ]
+    },
+    {
+        'title': 'Explicit Uncertainty Acknowledgment',
+        'description': (
+            'These sentences explicitly acknowledge uncertainty or limitations in the current reasoning state, '
+            'signaling awareness of incomplete information or ambiguity without proposing a concrete hypothesis. '
+            'Included are clear acknowledgments of uncertainty or ignorance (e.g., "I\'m not sure," "It\'s unclear," '
+            '"I can\'t be certain").'
+        ),
+        'examples': [
+            "It's unclear whether the author intended this interpretation.",
+            "I'm not sure if the given data is sufficient to draw a conclusion here.",
+            "I can't be certain from the provided details alone.",
+            "There's insufficient information to determine the exact cause of the discrepancy.",
+            "It remains uncertain if the described approach generalizes beyond this particular context.",
+        ]
+    },
+    {
+        'title': 'Stepwise Plan Declaration',
+        'description': (
+            'These sentences explicitly lay out the next action(s) the reasoner intends to take, '
+            'framing the reasoning as a sequence of ordered steps. Included are forward-looking '
+            'statements with temporal markers (“first,” “next,” “then,” “after that,” “finally”) '
+            'that announce but do not yet execute an operation.'
+        ),
+        'examples': [
+            "First, I'll restate the key facts in my own words.",
+            "Next, I will compute the correlation between the two variables.",
+            "Then I plan to test whether those coefficients remain significant under regularization.",
+            "After that, I'll examine edge cases to see if the rule still holds.",
+            "Finally, I'll synthesize the evidence into a concise conclusion.",
+        ]
+    },
+    {
+        'title': 'Assumption Articulation',
+        'description': (
+            'These sentences explicitly state a premise that will be treated as true for the remainder of '
+            'the reasoning, establishing a temporary foundation on which deductions or calculations will build. '
+            'Included are phrases that foreground the assumption—"assume," "suppose," "let\'s posit," '
+            '"given that"—without yet evaluating or testing it.'
+        ),
+        'examples': [
+            "Let's assume the training data are independently and identically distributed.",
+            "Suppose the network latency remains constant throughout the experiment.",
+            "Given that the user's intent is benign, we can skip the security sandbox.",
+            "For simplicity, I'll posit that all variables follow a Gaussian prior.",
+            "Assume the function is differentiable over the entire real line.",
+        ]
+    },
+    {
+        'title': 'Definition Recall',
+        'description': (
+            'These sentences retrieve a known fact, formula, or formal definition from memory to serve as a premise '
+            'for the upcoming reasoning step, without yet applying or testing it. Included are explicit reminders '
+            'such as “by definition,” “recall that,” or “we know that” followed by a canonical statement or equation. '
+        ),
+        'examples': [
+            "By definition, a prime number has exactly two positive divisors.",
+            "Recall that the area of a circle is π r².",
+            "We know that entropy is defined as H(X) = −Σ p(x) log p(x).",
+            "According to De Morgan's law, ¬(A ∧ B) ≡ ¬A ∨ ¬B.",
+            "By Bayes' theorem, P(A | B) = P(B | A) P(A) / P(B).",
+        ]
+    }
+]
+
+
+def run_chat_batch_with_event_loop_handling(batch_prompts, model):
+    """
+    Helper function to run chat_batch with proper async event loop handling.
+    Handles both Jupyter (with running event loop) and regular script environments.
+    
+    Parameters:
+    -----------
+    batch_prompts : list
+        List of prompts to process in batch
+    model : str
+        Model to use for the chat batch
+        
+    Returns:
+    --------
+    list
+        List of responses from the chat batch
+    """
+    import asyncio
+    import concurrent.futures
+    import threading
+    
+    # Handle both Jupyter (with running event loop) and regular scripts
+    try:
+        # Check if there's already a running event loop
+        loop = asyncio.get_running_loop()
+        # If we get here, we're in an environment with a running loop (like Jupyter)
+        # We need to create a task and run it in a separate thread
+        
+        def run_in_thread():
+            return asyncio.run(chat_batch(batch_prompts, model=model))
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(run_in_thread)
+            responses = future.result()
+    except RuntimeError:
+        # No running event loop, safe to use asyncio.run()
+        responses = asyncio.run(chat_batch(batch_prompts, model=model))
+    
+    return responses
+
+
+def parse_json_response(response, expected_field=None):
+    """
+    Parse JSON response from chat model with robust error handling.
+    
+    Parameters:
+    -----------
+    response : str
+        Raw response from chat model
+    expected_field : str, optional
+        Expected top-level field name (e.g., 'categorizations', 'classifications')
+        If provided, will attempt field-specific regex extraction
+        
+    Returns:
+    --------
+    dict
+        Parsed JSON object
+        
+    Raises:
+    -------
+    ValueError
+        If response is empty
+    json.JSONDecodeError
+        If JSON cannot be parsed after all cleaning attempts
+    """
+    import re
+    import json
+    
+    if not response:
+        raise ValueError("Empty response from model")
+    
+    # Try to extract JSON from markdown code blocks first
+    json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
+    if json_match:
+        json_str = json_match.group(1)
+    else:
+        # Try field-specific regex patterns
+        if expected_field == 'categorizations':
+            json_match = re.search(r'{\s*"categorizations":\s*\[[\s\S]*?\]\s*}', response)
+        elif expected_field == 'classifications':
+            json_match = re.search(r'{\s*"classifications":\s*\[[\s\S]*?\]\s*}', response)
+        else:
+            # Generic JSON object pattern
+            json_match = re.search(r'{\s*"[^"]*":\s*[\s\S]*?\}', response)
+        
+        if json_match:
+            json_str = json_match.group(0)
+        else:
+            # If all else fails, try the entire response
+            json_str = response
+    
+    # Robust JSON sanitization
+    # First, normalize line endings and handle smart quotes
+    json_str = json_str.replace('\r\n', '\n').replace('\r', '\n')
+    json_str = json_str.replace('"', '"').replace('"', '"')
+    json_str = json_str.replace(''', "'").replace(''', "'")
+    
+    # Try to parse first, if it fails, apply more aggressive cleaning
+    try:
+        result = json.loads(json_str)
+        return result
+    except json.JSONDecodeError as e:
+        print(f"Initial JSON parse failed: {e}")
+        print("Applying more aggressive JSON cleaning...")
+        
+        # Fix common issues that break JSON parsing
+        # Escape unescaped backslashes (but preserve valid escape sequences)
+        json_str = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_str)
+        
+        # Handle potential issues with ellipses and other characters
+        json_str = json_str.replace('…', '...')
+        
+        # Try parsing again
+        try:
+            result = json.loads(json_str)
+            return result
+        except json.JSONDecodeError as e2:
+            print(f"Second JSON parse also failed: {e2}")
+            print("Trying to fix unescaped quotes in string values...")
+            
+            # Fix unescaped quotes within string values
+            json_str = fix_unescaped_quotes_in_json(json_str)
+            
+            try:
+                result = json.loads(json_str)
+                return result
+            except json.JSONDecodeError as e3:
+                # Last resort: try to fix the JSON by finding the problematic location
+                print(f"Third JSON parse also failed: {e3}")
+                # Save the problematic JSON for debugging
+                print(f"Problematic JSON excerpt around error: {json_str[max(0, e3.pos-100):e3.pos+100]}")
+                raise e3
+
+
+def fix_unescaped_quotes_in_json(json_str):
+    """
+    Fix unescaped quotes within JSON string values using a simple state machine.
+    
+    Parameters:
+    -----------
+    json_str : str
+        JSON string that may contain unescaped quotes
+        
+    Returns:
+    --------
+    str
+        JSON string with quotes properly escaped
+    """
+    result = []
+    i = 0
+    in_string = False
+    
+    while i < len(json_str):
+        char = json_str[i]
+        
+        if char == '"' and (i == 0 or json_str[i-1] != '\\'):
+            # Found an unescaped quote
+            if not in_string:
+                # Starting a string
+                in_string = True
+                result.append(char)
+            else:
+                # Check if this ends the string by looking at what comes next
+                # Skip whitespace to see what's after this quote
+                j = i + 1
+                while j < len(json_str) and json_str[j] in ' \t\n\r':
+                    j += 1
+                
+                if j < len(json_str) and json_str[j] in ',}]':
+                    # This quote ends the string
+                    in_string = False
+                    result.append(char)
+                else:
+                    # This quote is inside the string and should be escaped
+                    result.append('\\"')
+            i += 1
+        elif char == '\\' and i + 1 < len(json_str) and json_str[i + 1] == '"':
+            # This is already an escaped quote, keep it as is
+            result.append(char)
+            result.append(json_str[i + 1])
+            i += 2
+        else:
+            result.append(char)
+            i += 1
+    
+    return ''.join(result)
+
+
 def load_trained_clustering_data(model_id, layer, n_clusters, method):
     """
     Load trained clustering data for a specific model, layer, and clustering method.
@@ -224,93 +495,7 @@ def get_latent_descriptions(model_id, layer, n_clusters):
     
     return {}
 
-def generate_cluster_description(examples, model="gpt-4.1", n_trace_examples=0, model_name=None):
-    """
-    Generate a concise title and description for a cluster based on the top k examples.
-    
-    Args:
-        examples (list): List of text examples from the cluster
-        model (str): Model to use for generating the description
-        n_trace_examples (int): Number of full reasoning trace examples to include in the prompt
-        model_name (str): Name of the model whose responses should be loaded for trace examples
-        
-    Returns:
-        tuple: (title, description) where both are strings
-    """    
-    # Prepare trace examples if requested
-    trace_examples_text = ""
-    if n_trace_examples > 0 and model_name is not None:
-        try:
-            # Get model identifier for file naming
-            model_id = model_name.split('/')[-1].lower()
-            responses_json_path = f"../generate-responses/results/vars/responses_{model_id}.json"
-            
-            # Load responses
-            with open(responses_json_path, 'r') as f:
-                responses_data = json.load(f)
-            
-            # Select random examples
-            trace_samples = random.sample(responses_data, min(n_trace_examples, len(responses_data)))
-            
-            # Extract thinking processes
-            trace_examples = []
-            for sample in trace_samples:
-                if sample.get("thinking_process"):
-                    trace_examples.append(sample["thinking_process"])
-            
-            if trace_examples:
-                trace_examples_text = "Here are some full reasoning traces to help understand the context:\n'''\n"
-                for i, trace in enumerate(trace_examples):
-                    trace_examples_text += f"TRACE {i+1}:\n{trace}\n\n"
-                trace_examples_text += "'''"
-        except Exception as e:
-            print(f"Error loading trace examples: {e}")
-    
-    # Create a prompt for the model
-    prompt = f"""Analyze the following {len(examples)} sentences from an LLM reasoning trace. These sentences are grouped into a cluster based on their similar role or function in the reasoning process.
-
-Your task is to identify the precise cognitive function these sentences serve in the reasoning process. Consider:
-1. The reasoning strategy or cognitive operation being performed
-2. Whether these sentences tend to appear in a specific position in reasoning (if applicable)
-
-{trace_examples_text}
-
-Examples:
-'''
-{chr(10).join([f"- {example}" for example in examples])}
-'''
-
-Look for:
-- Shared reasoning strategies or cognitive mechanisms
-- Common linguistic patterns or structures
-- Positional attributes (only if clearly evident)
-- Functional role within the overall reasoning process
-
-Your response should be in this exact format:
-Title: [concise title naming the specific reasoning function]
-Description: [2-3 sentences explaining (1) what this function does, (2) what is INCLUDED and NOT INCLUDED in this category, and (3) position in reasoning if relevant]
-
-Avoid overly general descriptions. Be precise enough that someone could reliably identify new examples of this reasoning function.
-"""
-        
-    # Get the response from the model
-    response = chat(prompt, model=model)
-    
-    # Parse the response to extract title and description
-    title = "Unnamed Cluster"
-    description = "No description available"
-    
-    title_match = re.search(r"Title:\s*(.*?)(?:\n|$)", response)
-    if title_match:
-        title = title_match.group(1).strip()
-        
-    desc_match = re.search(r"Description:\s*(.*?)(?:\n|$)", response)
-    if desc_match:
-        description = desc_match.group(1).strip()
-    
-    return title, description
-
-def generate_cluster_descriptions(model_name, cluster_examples_list, evaluator_model, n_trace_examples=0):
+def generate_cluster_descriptions(model_name, cluster_examples_list, evaluator_model, n_trace_examples=0, n_categories_examples=3):
     """
     Generate descriptions for multiple clusters in batch.
     
@@ -352,6 +537,22 @@ def generate_cluster_descriptions(model_name, cluster_examples_list, evaluator_m
         except Exception as e:
             print(f"Error loading trace examples: {e}")
     
+    # Prepare category examples text if requested
+    category_examples_text = ""
+    if n_categories_examples > 0:
+        # Select up to n_categories_examples from the categories_examples list
+        selected_examples = categories_examples[:n_categories_examples]
+        
+        if selected_examples:
+            category_examples_text = "Here are some example categories to help guide your analysis:\n\n"
+            for i, category in enumerate(selected_examples):
+                category_examples_text += f"**Example Category {i+1}: {category['title']}**\n"
+                category_examples_text += f"Description: {category['description']}\n"
+                category_examples_text += "Examples:\n"
+                for example in category['examples']:
+                    category_examples_text += f"- {example}\n"
+                category_examples_text += "\n"
+    
     # Create prompts for all clusters
     batch_prompts = []
     cluster_indices = []
@@ -360,13 +561,10 @@ def generate_cluster_descriptions(model_name, cluster_examples_list, evaluator_m
         # Create a prompt for this cluster
         prompt = f"""Analyze the following {len(examples)} sentences from an LLM reasoning trace. These sentences are grouped into a cluster based on their similar role or function in the reasoning process.
 
-Your task is to identify the precise cognitive function these sentences serve in the reasoning process. Consider:
-1. The reasoning strategy or cognitive operation being performed
-2. Whether these sentences tend to appear in a specific position in reasoning (if applicable)
+Your task is to identify the precise cognitive function these sentences serve in the reasoning process. Consider the reasoning strategy or cognitive operation being performed
+""" + (f"\n{trace_examples_text}" if trace_examples_text else "") + f"""
 
-{trace_examples_text}
-
-Examples:
+Sentences:
 '''
 {chr(10).join([f"- {example}" for example in examples])}
 '''
@@ -374,14 +572,13 @@ Examples:
 Look for:
 - Shared reasoning strategies or cognitive mechanisms
 - Common linguistic patterns or structures
-- Positional attributes (only if clearly evident)
-- Functional role within the overall reasoning process
+- Functional role within the overall reasoning process"""  + (f"\n\n{category_examples_text}" if category_examples_text else "") + """
 
 Your response should be in this exact format:
 Title: [concise title naming the specific reasoning function]
-Description: [2-3 sentences explaining (1) what this function does, (2) what is INCLUDED and NOT INCLUDED in this category, and (3) position in reasoning if relevant]
+Description: [2-4 sentences explaining what this function does and giving examples of what is included in this category]
 
-Avoid overly general descriptions. Be precise enough that someone could reliably identify new examples of this reasoning function. Keep the title very concise and short; the fewer the words, and the simpler the better. Also, avoid titles with slashes that combine multiple concepts.
+Be general enough that so that it can be applied to all the examples listed above, but precise enough that someone could reliably identify new examples of this reasoning function.
 """
         
         batch_prompts.append(prompt)
@@ -389,27 +586,7 @@ Avoid overly general descriptions. Be precise enough that someone could reliably
     
     # Process all prompts in batch
     print(f"Processing {len(batch_prompts)} cluster description prompts in batch...")
-    # Run the async batch processing
-    import asyncio
-    
-    # Handle both Jupyter (with running event loop) and regular scripts
-    try:
-        # Check if there's already a running event loop
-        loop = asyncio.get_running_loop()
-        # If we get here, we're in an environment with a running loop (like Jupyter)
-        # We need to create a task and run it
-        import concurrent.futures
-        import threading
-        
-        def run_in_thread():
-            return asyncio.run(chat_batch(batch_prompts, model=evaluator_model))
-        
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(run_in_thread)
-            responses = future.result()
-    except RuntimeError:
-        # No running event loop, safe to use asyncio.run()
-        responses = asyncio.run(chat_batch(batch_prompts, model=evaluator_model))
+    responses = run_chat_batch_with_event_loop_handling(batch_prompts, evaluator_model)
     
     # Parse responses to extract titles and descriptions
     results = []
@@ -443,38 +620,73 @@ def simplify_category_name(category_name):
         return match.group(1)
     return category_name
 
-def completeness_autograder(sentences, categories, model):
+def completeness_autograder(sentences, categories, model, ground_truth_labels=None, max_sentences_per_prompt=50):
     """
     Autograder that evaluates if sentences belong to any of the provided categories.
     
     Args:
         sentences (list): List of sentences to evaluate
         categories (list): List of tuples where each tuple is (cluster_id, title, description)
+        model (str): Model to use for evaluation
+        ground_truth_labels (list, optional): Ground truth cluster labels for each sentence
+        max_sentences_per_prompt (int): Maximum number of sentences to process per prompt
     
     Returns:
-        dict: Statistics about category assignments including the fraction of sentences assigned/not assigned
+        dict: Statistics about category assignments including detailed analysis of assignments vs ground truth
     """
     # Format the categories into a readable list for the prompt
     categories_text = "\n\n".join([f"Category {cluster_id}: {title}\nDescription: {description}" 
                                   for cluster_id, title, description in categories])
     
-    # Format the sentences into a numbered list
-    sentences_text = "\n\n".join([f"Sentence {i}: {sentence}" for i, sentence in enumerate(sentences)])
+    # Split sentences into chunks if necessary
+    total_sentences = len(sentences)
+    if total_sentences <= max_sentences_per_prompt:
+        # Process all sentences in a single prompt
+        sentence_chunks = [sentences]
+        ground_truth_chunks = [ground_truth_labels] if ground_truth_labels is not None else [None]
+        chunk_start_indices = [0]
+    else:
+        # Split into multiple chunks
+        sentence_chunks = []
+        ground_truth_chunks = []
+        chunk_start_indices = []
+        
+        for i in range(0, total_sentences, max_sentences_per_prompt):
+            end_idx = min(i + max_sentences_per_prompt, total_sentences)
+            sentence_chunks.append(sentences[i:end_idx])
+            chunk_start_indices.append(i)
+            
+            if ground_truth_labels is not None:
+                ground_truth_chunks.append(ground_truth_labels[i:end_idx])
+            else:
+                ground_truth_chunks.append(None)
+    
+    # Create prompts for all chunks
+    batch_prompts = []
+    
+    for chunk_idx, (sentence_chunk, chunk_start_idx) in enumerate(zip(sentence_chunks, chunk_start_indices)):
+        # Format the sentences into a numbered list (using original sentence indices)
+        sentences_text = "\n\n".join([f"Sentence {chunk_start_idx + i}: {sentence}" 
+                                     for i, sentence in enumerate(sentence_chunk)])
 
-    prompt = f"""# Task: Categorize Sentences of Reasoning Traces
+        prompt = f"""# Task: Categorize Sentences by their Functional Role in a Reasoning Trace
 
-You are an expert at categorizing the sentences of reasoning traces into predefined categories. Your task is to analyze each sentence and assign it to the most appropriate category based on the provided descriptions. If a sentence does not fit into any category, label it as "None".
+You are an expert at analyzing the *function* of sentences within a longer chain of reasoning. Your task is to categorize each sentence below based on the cognitive or procedural role it plays in the reasoning process.
 
-## Categories:
+**Core Principle:** Do not focus on the surface-level topic of the sentence. Instead, abstract away from the specific content and ask: "What *job* is this sentence doing in the reasoning trace?"
+
+## Categories of Reasoning Functions:
 {categories_text}
 
 ## Sentences to Categorize:
 {sentences_text}
 
 ## Instructions:
-1. For each sentence, carefully consider if it fits into one of the defined categories.
-2. Assign exactly ONE category to each sentence if applicable, or "None" if it doesn't fit any category.
-3. Provide your response in the exact format specified below.
+1. For each sentence, identify its functional role in a potential reasoning process.
+2. Compare this role to the category descriptions.
+3. If applicable, assign the sentence to the category that best describes its function. Importantly, a sentence might not match a description word-for-word, but it might serve the same underlying purpose.
+4. If the sentence's function does not align with any category, assign it "None".
+5. Assign exactly ONE category or "None" to each sentence.
 
 ## Response Format:
 Your response must follow this exact JSON format:
@@ -483,8 +695,8 @@ Your response must follow this exact JSON format:
   "categorizations": [
     {{
       "sentence_id": <sentence idx>,
-      "assigned_category": "Category <category idx>" (not the title, just the category index) or "None",
-      "explanation": "Brief explanation of your reasoning"
+      "explanation": "Brief explanation of your reasoning for the categorization",
+      "assigned_category": "Category <category idx>" (not the title, just the category index) or "None"
     }},
     ... (repeat for all sentences)
   ]
@@ -494,75 +706,150 @@ Your response must follow this exact JSON format:
 Only include the JSON object in your response, with no additional text before or after.
 """
         
-    # Call the chat API to get the categorization results
-    response = chat(prompt, model=model)
+        batch_prompts.append(prompt)
     
-    # Parse the response to extract the JSON
-    try:
-        import re
-        import json
-        
-        json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find just the JSON object
-            json_match = re.search(r'{\s*"categorizations":\s*\[[\s\S]*?\]\s*}', response)
-            if json_match:
-                json_str = json_match.group(0)
-            else:
-                # If all else fails, just try to use the entire response
-                json_str = response
-        
-        # Sanitize the JSON string to escape invalid backslash sequences.
-        json_str = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_str)
-        
-        result = json.loads(json_str)
-        
-        # Count the number of sentences assigned to each category and those not assigned
-        total_sentences = len(sentences)
-        assigned = 0
-        not_assigned = 0
-        category_counts = {str(cluster_id): 0 for cluster_id, _, _ in categories}
-        category_counts["None"] = 0
-        
-        for item in result["categorizations"]:
-            category = item["assigned_category"]
-            if category == "None":
-                not_assigned += 1
-                category_counts["None"] += 1
-            else:
-                assigned += 1
-                # Extract just the cluster ID from "Category N" format
-                category_id = simplify_category_name(category)
-                category_counts[category_id] = category_counts.get(category_id, 0) + 1
-        
-        # Calculate fractions
-        assigned_fraction = assigned / total_sentences if total_sentences > 0 else 0
-        not_assigned_fraction = not_assigned / total_sentences if total_sentences > 0 else 0
-        
+    # Process all prompts in batch
+    print(f"Processing {len(batch_prompts)} prompts in batch for completeness evaluation...")
+    responses = run_chat_batch_with_event_loop_handling(batch_prompts, model)
+    
+    # Aggregate results from all chunks
+    all_categorizations = []
+    parsing_errors = []
+    
+    # Process each response from the batch
+    for i, response in enumerate(responses):        
+        try:
+            result = parse_json_response(response, expected_field='categorizations')
+            
+            # Add the categorizations from this chunk to the overall list
+            all_categorizations.extend(result["categorizations"])
+            
+        except Exception as e:
+            print(f"Error parsing response for chunk {i}: {e}")
+            print(f"Raw response: {response}")
+            parsing_errors.append({
+                "chunk_idx": i,
+                "error": str(e),
+                "raw_response": response
+            })
+    
+    # If we had parsing errors, return error information
+    if parsing_errors and not all_categorizations:
         return {
+            "error": f"Failed to parse {len(parsing_errors)} chunks",
             "total_sentences": total_sentences,
-            "assigned": assigned,
-            "not_assigned": not_assigned,
-            "assigned_fraction": assigned_fraction,
-            "not_assigned_fraction": not_assigned_fraction,
-            "category_counts": category_counts,
-            "categorizations": result["categorizations"]
-        }
-    
-    except Exception as e:
-        print(f"Error parsing response: {e}")
-        print(f"Raw response: {response}")
-        return {
-            "error": str(e),
-            "total_sentences": len(sentences),
             "assigned": 0,
-            "not_assigned": len(sentences),
+            "not_assigned": total_sentences,
             "assigned_fraction": 0,
             "not_assigned_fraction": 1.0,
-            "raw_response": response
+            "parsing_errors": parsing_errors
         }
+    
+    # Aggregate statistics from all categorizations
+    assigned = 0
+    not_assigned = 0
+    category_counts = {str(cluster_id): 0 for cluster_id, _, _ in categories}
+    category_counts["None"] = 0
+    
+    # Enhanced analysis if ground truth labels are provided
+    detailed_analysis = {
+        "correct_assignments": [],      # Assigned to correct category
+        "incorrect_assignments": [],    # Assigned to wrong category  
+        "missed_assignments": [],       # Should have been assigned but weren't (assigned "None")
+    }
+    
+    # Create a mapping of category IDs for quick lookup
+    valid_category_ids = {str(cluster_id) for cluster_id, _, _ in categories}
+    
+    for item in all_categorizations:
+        sentence_idx = item["sentence_id"]
+        assigned_category = item["assigned_category"]
+        explanation = item.get("explanation", "")
+        sentence_text = sentences[sentence_idx]
+        
+        # Process assignment counts
+        if assigned_category == "None":
+            not_assigned += 1
+            category_counts["None"] += 1
+        else:
+            assigned += 1
+            # Extract just the cluster ID from "Category N" format
+            category_id = simplify_category_name(assigned_category)
+            category_counts[category_id] = category_counts.get(category_id, 0) + 1
+        
+        # Enhanced analysis with ground truth if available
+        if ground_truth_labels is not None and sentence_idx < len(ground_truth_labels) and sentence_idx < len(sentences):
+            ground_truth = str(ground_truth_labels[sentence_idx])
+            assigned_category_id = simplify_category_name(assigned_category) if assigned_category != "None" else "None"
+            
+            # Create detailed item for analysis
+            detailed_item = {
+                "sentence_id": sentence_idx,
+                "sentence_text": sentence_text,
+                "assigned_category": assigned_category,
+                "ground_truth_category": ground_truth,
+                "explanation": explanation
+            }
+            
+            assert ground_truth in valid_category_ids, f"Ground truth {ground_truth} not in valid category ids {valid_category_ids}"
+
+            # Sentence should have been assigned to a category
+            if assigned_category_id == ground_truth:
+                # Correctly assigned
+                detailed_analysis["correct_assignments"].append(detailed_item)
+            elif assigned_category_id == "None":
+                # Should have been assigned but wasn't
+                detailed_analysis["missed_assignments"].append(detailed_item)
+            else:
+                # Assigned to wrong category
+                detailed_analysis["incorrect_assignments"].append(detailed_item)
+    
+    # Calculate fractions
+    assigned_fraction = assigned / total_sentences if total_sentences > 0 else 0
+    not_assigned_fraction = not_assigned / total_sentences if total_sentences > 0 else 0
+    
+    # Calculate detailed metrics if ground truth is available
+    completeness_metrics = {}
+    if ground_truth_labels is not None:
+        n_correct = len(detailed_analysis["correct_assignments"])
+        n_incorrect = len(detailed_analysis["incorrect_assignments"])
+        n_missed = len(detailed_analysis["missed_assignments"])
+        
+        # Sentences that should have been assigned (have valid ground truth categories)
+        should_be_assigned = n_correct + n_incorrect + n_missed
+        # Sentences that were assigned
+        were_assigned = n_correct + n_incorrect
+        
+        completeness_metrics = {
+            "correct_assignments": n_correct,
+            "incorrect_assignments": n_incorrect,
+            "missed_assignments": n_missed,
+            "assignment_accuracy": n_correct / were_assigned if were_assigned > 0 else 0,
+            "assignment_recall": n_correct / should_be_assigned if should_be_assigned > 0 else 0,
+            "assignment_precision": n_correct / were_assigned if were_assigned > 0 else 0
+        }
+    
+    result_dict = {
+        "total_sentences": total_sentences,
+        "assigned": assigned,
+        "not_assigned": not_assigned,
+        "assigned_fraction": assigned_fraction,
+        "not_assigned_fraction": not_assigned_fraction,
+        "category_counts": category_counts,
+        "categorizations": all_categorizations,
+        "detailed_analysis": detailed_analysis,
+        "completeness_metrics": completeness_metrics
+    }
+    
+    # Add information about batching if applicable
+    if len(batch_prompts) > 1:
+        result_dict["batch_info"] = {
+            "num_batches": len(batch_prompts),
+            "max_sentences_per_prompt": max_sentences_per_prompt,
+            "parsing_errors": parsing_errors
+        }
+    
+    return result_dict
 
 def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_autograder_examples):
     """
@@ -614,9 +901,11 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_aut
         shuffled_indices, test_sentences, test_ground_truth = zip(*combined)
         
         # Create a prompt for binary classification
-        prompt = f"""# Task: Binary Classification of Reasoning Sentences
+        prompt = f"""# Task: Binary Classification of Reasoning Sentences by Function
 
-You are an expert at analyzing reasoning traces. I'll provide a description of a specific reasoning function or pattern, along with several example sentences. Your task is to determine whether each sentence belongs to this category or not.
+You are an expert at analyzing the *function* of sentences within a longer chain of reasoning. Your task is to determine if each sentence below performs the specific cognitive or procedural role described.
+
+**Core Principle:** Do not focus on the surface-level topic of the sentence. Instead, abstract away from the specific content and ask: "What *job* is this sentence doing in the reasoning trace?"
 
 ## Category Description:
 Title: {title}
@@ -626,9 +915,11 @@ Description: {description}
 {chr(10).join([f"Sentence {i}: {sentence}" for i, sentence in enumerate(test_sentences)])}
 
 ## Instructions:
-1. For each sentence, determine if it belongs to the described category.
-2. Respond with "Yes" if it belongs to the category, or "No" if it does not.
-3. Provide your response in the exact format specified below.
+1. For each sentence, identify its functional role in a potential reasoning process.
+2. Compare this role to the category description provided.
+3. If the sentence's function matches the description, assign "Yes". Importantly, a sentence might not match a description word-for-word, but it might serve the same underlying purpose.
+4. If the sentence's function does not align with the category, assign it "No".
+5. Respond with "Yes" or "No" for each sentence.
 
 ## Response Format:
 Your response must follow this exact JSON format:
@@ -662,27 +953,7 @@ Only include the JSON object in your response, with no additional text before or
     
     # Process all prompts in batch
     print(f"Processing {len(batch_prompts)} prompts in batch for evaluating accuracy...")
-    # Run the async batch processing
-    import asyncio
-    
-    # Handle both Jupyter (with running event loop) and regular scripts
-    try:
-        # Check if there's already a running event loop
-        loop = asyncio.get_running_loop()
-        # If we get here, we're in an environment with a running loop (like Jupyter)
-        # We need to create a task and run it
-        import concurrent.futures
-        import threading
-        
-        def run_in_thread():
-            return asyncio.run(chat_batch(batch_prompts, model=model))
-        
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(run_in_thread)
-            responses = future.result()
-    except RuntimeError:
-        # No running event loop, safe to use asyncio.run()
-        responses = asyncio.run(chat_batch(batch_prompts, model=model))
+    responses = run_chat_batch_with_event_loop_handling(batch_prompts, model)
     
     # Process all responses
     for i, response in enumerate(responses):
@@ -694,25 +965,7 @@ Only include the JSON object in your response, with no additional text before or
         
         # Parse the response to extract the JSON
         try:
-            import re
-            import json
-            
-            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Try to find just the JSON object
-                json_match = re.search(r'{\s*"classifications":\s*\[[\s\S]*?\]\s*}', response)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    # If all else fails, just try to use the entire response
-                    json_str = response
-            
-            # Sanitize the JSON string to escape invalid backslash sequences.
-            json_str = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_str)
-            
-            result = json.loads(json_str)
+            result = parse_json_response(response, expected_field='classifications')
             
             # Compute metrics for this cluster
             true_positives = 0
@@ -884,7 +1137,7 @@ def generate_representative_examples(cluster_centers, texts, cluster_labels, exa
     return representative_examples
 
 
-def generate_category_descriptions(cluster_centers, model_name, evaluator_model, n_description_examples, representative_examples):
+def generate_category_descriptions(cluster_centers, model_name, evaluator_model, n_description_examples, representative_examples, n_trace_examples=3, n_categories_examples=3):
     """
     Generate descriptions for each cluster based on most representative sentences.
     Uses half top examples and half random examples from the cluster.
@@ -918,8 +1171,39 @@ def generate_category_descriptions(cluster_centers, model_name, evaluator_model,
             print_and_flush(f"WARNING:Skipping empty cluster {cluster_idx} in generate_category_descriptions")
             continue
         
-        # Get top examples
-        examples = representative_examples[cluster_idx][:n_description_examples]
+        # Sample examples from across the entire cluster for better diversity
+        cluster_examples = representative_examples[cluster_idx]
+        total_examples = len(cluster_examples)
+        
+        if total_examples <= n_description_examples:
+            # If we have fewer examples than requested, use all of them
+            examples = cluster_examples
+        else:
+            # Divide examples into 10 deciles and sample from each
+            examples = []
+            examples_per_decile = n_description_examples // 10
+            remainder = n_description_examples % 10
+            
+            for decile in range(10):
+                # Calculate start and end indices for this decile
+                start_idx = (decile * total_examples) // 10
+                end_idx = ((decile + 1) * total_examples) // 10
+                
+                # Get examples from this decile
+                decile_examples = cluster_examples[start_idx:end_idx]
+                
+                # Determine how many to sample from this decile
+                num_to_sample = examples_per_decile
+                if decile < remainder:  # Distribute remainder across first few deciles
+                    num_to_sample += 1
+                    
+                # Take the first num_to_sample examples from this decile
+                # (they are already sorted by distance to centroid)
+                examples.extend(decile_examples[:num_to_sample])
+        
+        # Shuffle examples to ensure diversity
+        random.shuffle(examples)
+
         cluster_examples_list.append((cluster_idx, examples))
     
     # Generate descriptions in batch
@@ -927,7 +1211,8 @@ def generate_category_descriptions(cluster_centers, model_name, evaluator_model,
         model_name,
         cluster_examples_list, 
         evaluator_model,
-        n_trace_examples=3
+        n_trace_examples=n_trace_examples,
+        n_categories_examples=n_categories_examples
     )
     
     print_and_flush(f"Generated category descriptions in {time.time() - start_time} seconds")
@@ -972,7 +1257,7 @@ def evaluate_clustering_accuracy(texts, cluster_labels, categories, model, n_aut
     print_and_flush(f"Evaluated clustering accuracy in {time.time() - start_time} seconds")
     return results
 
-def evaluate_clustering_completeness(texts, categories, model, n_test_examples):
+def evaluate_clustering_completeness(texts, categories, model, n_test_examples, cluster_labels=None):
     """
     Evaluate clustering using the completeness autograder with a random sample of texts.
     
@@ -982,25 +1267,33 @@ def evaluate_clustering_completeness(texts, categories, model, n_test_examples):
         List of texts
     categories : list
         List of tuples (cluster_id, title, description)
+    model : str
+        Model to use for evaluation
     n_test_examples : int
         Number of examples to use for testing completeness
+    cluster_labels : list, optional
+        Ground truth cluster labels for each text
         
     Returns:
     --------
     dict
-        Autograder results
+        Autograder results with detailed analysis
     """
     start_time = time.time()
     # Sample n_test_examples randomly from all texts
     if len(texts) > n_test_examples:
-        test_texts = random.sample(texts, n_test_examples)
+        # Get random indices for sampling
+        sample_indices = random.sample(range(len(texts)), n_test_examples)
+        test_texts = [texts[i] for i in sample_indices]
+        test_labels = [cluster_labels[i] for i in sample_indices] if cluster_labels is not None else None
     else:
         test_texts = texts
+        test_labels = cluster_labels
     
     # Run autograder on the sampled texts
     for _ in range(3):
         try:
-            results = completeness_autograder(test_texts, categories, model)
+            results = completeness_autograder(test_texts, categories, model, test_labels)
             break
         except Exception as e:
             print_and_flush(f"Error running completeness autograder: {e}")
@@ -1067,9 +1360,12 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     }
     
     # Optionally run completeness autograder
-    completeness_results = evaluate_clustering_completeness(texts, categories, "gpt-4.1", 50)
+    str_cluster_labels = [str(label) for label in cluster_labels]
+    completeness_results = evaluate_clustering_completeness(texts, categories, "gpt-4.1", 50, str_cluster_labels)
     results["assigned_fraction"] = completeness_results["assigned_fraction"]
     results["category_counts"] = completeness_results["category_counts"]
+    results["completeness_detailed"] = completeness_results.get("detailed_analysis", {})
+    results["completeness_metrics"] = completeness_results.get("completeness_metrics", {})
 
     # Create detailed results by cluster
     detailed_results = {}
