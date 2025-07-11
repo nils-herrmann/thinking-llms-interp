@@ -173,7 +173,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
         model=model,
         prompts=prompts,
         max_tokens=max_tokens,
-        temperature=1e-19,
+        # temperature=1e-19,
     )
     
     # Configure batch processing
@@ -181,7 +181,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
         max_concurrent_requests=max_concurrent_requests,
         max_retries_per_item=max_retries_per_item,
         group_by_model=True,
-        verbose=True
+        # verbose=True
     )
     
     # Process batch with increased timeout for reliability
@@ -205,10 +205,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
             else:
                 responses.append(str(response))
         else:
-            # Fallback to individual chat call for failed requests
-            print(f"Batch request {i} failed: {result.error}. Falling back to individual chat call.")
-            fallback_response = chat(prompts[i], model=model, max_tokens=max_tokens)
-            responses.append(fallback_response)
+            print(f"Batch request {i} failed: {result.error_message}")
     
     return responses
 

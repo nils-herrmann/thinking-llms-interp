@@ -32,8 +32,6 @@ N_EXAMPLES = 100000
 N_CLUSTERS = 20 # 29
 CLUSTERING_METHOD = "sae_topk"  # Choose from SUPPORTED_CLUSTERING_METHODS
 LOAD_IN_8BIT = False
-N_AUTOGRADER_EXAMPLES = 100
-N_DESCRIPTION_EXAMPLES = 50
 
 # Get model identifier for file naming
 model_id = MODEL_NAME.split('/')[-1].lower()
@@ -45,6 +43,18 @@ print(f"Layer: {LAYER}")
 print(f"Number of examples: {N_EXAMPLES}")
 print(f"Number of clusters: {N_CLUSTERS}")
 print(f"Clustering method: {CLUSTERING_METHOD}")
+
+# %%
+
+# Clustering evaluation config
+MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS = "o3"
+N_DESCRIPTION_EXAMPLES = 50
+
+MODEL_NAME_FOR_COMPLETENESS_EVALUATION = "gpt-4.1"
+N_COMPLETENESS_EXAMPLES = 50
+
+MODEL_NAME_FOR_ACCURACY_EVALUATION = "gpt-4.1"
+N_ACCURACY_EXAMPLES = 100
 
 # %%
 # Load model and process activations
@@ -141,6 +151,36 @@ for i, count in cluster_counts.items():
 plt.show()
 
 # %%
+# Compute centroid orthogonality
+print("Computing centroid orthogonality...")
+avg_orthogonality = compute_centroid_orthogonality(cluster_centers)
+print(f"Average centroid orthogonality: {avg_orthogonality:.4f}")
+
+# Plot orthogonality between each cluster center
+norm_cluster_centers = cluster_centers / np.linalg.norm(cluster_centers, axis=1, keepdims=True)
+cosine_sim = np.dot(norm_cluster_centers, norm_cluster_centers.T)
+abs_cosine_sim = np.abs(cosine_sim)
+orthogonality = 1 - abs_cosine_sim
+
+plt.figure(figsize=(10, 8))
+im = plt.imshow(orthogonality, cmap='viridis', interpolation='nearest')
+plt.colorbar(im, label='Orthogonality (1 - |cosine similarity|)')
+plt.title(f'Orthogonality Matrix Between Cluster Centers - {CLUSTERING_METHOD} (Layer {LAYER})')
+plt.xlabel('Cluster ID')
+plt.ylabel('Cluster ID')
+plt.xticks(range(len(cluster_centers)))
+plt.yticks(range(len(cluster_centers)))
+
+# Add text annotations for values
+for i in range(len(cluster_centers)):
+    for j in range(len(cluster_centers)):
+        plt.text(j, i, f'{orthogonality[i, j]:.2f}', 
+                ha='center', va='center', color='white' if orthogonality[i, j] < 0.5 else 'black')
+
+plt.tight_layout()
+plt.show()
+
+# %%
 # Generate representative examples for each cluster
 print("Generating representative examples...")
 representative_examples = generate_representative_examples(
@@ -148,19 +188,29 @@ representative_examples = generate_representative_examples(
 )
 
 print("Representative examples by cluster:")
+n_top_examples_per_cluster = 25
+n_bottom_examples_per_cluster = 0
 for cluster_idx in sorted(representative_examples.keys()):
     examples = representative_examples[cluster_idx]
-    print(f"\nCluster {cluster_idx} ({len(examples)} examples):")
-    for i, example in enumerate(examples[:5]):  # Show top 5
+    n_examples = len(examples)
+    print(f"\nCluster {cluster_idx} ({n_examples} examples):")
+    # Print top N
+    for i, example in enumerate(examples[:n_top_examples_per_cluster]):
         print(f"  {i+1}. {example}")
-    if len(examples) > 5:
-        print(f"  ... and {len(examples) - 5} more")
+    # Print "... and X more" if there are more than top+bottom
+    n_more = n_examples - (n_top_examples_per_cluster + n_bottom_examples_per_cluster)
+    if n_more > 0:
+        print(f"  ... and {n_more} more")
+    if n_bottom_examples_per_cluster > 0:
+        # Print bottom N
+        for i, example in enumerate(examples[-n_bottom_examples_per_cluster:]):
+            print(f"  {n_examples - n_bottom_examples_per_cluster + i + 1}. {example}")
 
 # %%
 # Generate category descriptions
 print("Generating category descriptions...")
 categories = generate_category_descriptions(
-    cluster_centers, MODEL_NAME, N_DESCRIPTION_EXAMPLES, representative_examples
+    cluster_centers, MODEL_NAME, MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS, N_DESCRIPTION_EXAMPLES, representative_examples
 )
 
 print("Generated category descriptions:")
@@ -170,16 +220,15 @@ for cluster_id, title, description in categories:
     print(f"  Description: {description}")
 
 # %%
-# Compute centroid orthogonality
-print("Computing centroid orthogonality...")
-orthogonality = compute_centroid_orthogonality(cluster_centers)
-print(f"Average centroid orthogonality: {orthogonality:.4f}")
+print("Running completeness evaluation...")
+completeness_results = evaluate_clustering_completeness(all_texts, categories, MODEL_NAME_FOR_COMPLETENESS_EVALUATION, N_COMPLETENESS_EXAMPLES)
+print(f"Completeness results: {completeness_results}")
 
 # %%
 # Run accuracy evaluation (binary autograder)
 print("Running accuracy evaluation...")
 accuracy_results = evaluate_clustering_accuracy(
-    all_texts, cluster_labels, categories, N_AUTOGRADER_EXAMPLES
+    all_texts, cluster_labels, categories, MODEL_NAME_FOR_ACCURACY_EVALUATION, N_ACCURACY_EXAMPLES
 )
 
 print("Accuracy evaluation results:")
@@ -279,9 +328,3 @@ for cluster_id, title, description in categories:
         print(f"     Text: {sentence_text}")
     if len(false_positives) > 3:
         print(f"     ... and {len(false_positives) - 3} more")
-
-# %%
-
-print("Running completeness evaluation...")
-completeness_results = evaluate_clustering_completeness(all_texts, categories)
-print(f"Completeness results: {completeness_results}")

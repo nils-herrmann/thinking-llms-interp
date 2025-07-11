@@ -310,7 +310,7 @@ Avoid overly general descriptions. Be precise enough that someone could reliably
     
     return title, description
 
-def generate_cluster_descriptions(cluster_examples_list, model="gpt-4.1", n_trace_examples=0, model_name=None):
+def generate_cluster_descriptions(model_name, cluster_examples_list, evaluator_model, n_trace_examples=0):
     """
     Generate descriptions for multiple clusters in batch.
     
@@ -381,7 +381,7 @@ Your response should be in this exact format:
 Title: [concise title naming the specific reasoning function]
 Description: [2-3 sentences explaining (1) what this function does, (2) what is INCLUDED and NOT INCLUDED in this category, and (3) position in reasoning if relevant]
 
-Avoid overly general descriptions. Be precise enough that someone could reliably identify new examples of this reasoning function.
+Avoid overly general descriptions. Be precise enough that someone could reliably identify new examples of this reasoning function. Keep the title very concise and short; the fewer the words, and the simpler the better. Also, avoid titles with slashes that combine multiple concepts.
 """
         
         batch_prompts.append(prompt)
@@ -402,14 +402,14 @@ Avoid overly general descriptions. Be precise enough that someone could reliably
         import threading
         
         def run_in_thread():
-            return asyncio.run(chat_batch(batch_prompts, model=model))
+            return asyncio.run(chat_batch(batch_prompts, model=evaluator_model))
         
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(run_in_thread)
             responses = future.result()
     except RuntimeError:
         # No running event loop, safe to use asyncio.run()
-        responses = asyncio.run(chat_batch(batch_prompts, model=model))
+        responses = asyncio.run(chat_batch(batch_prompts, model=evaluator_model))
     
     # Parse responses to extract titles and descriptions
     results = []
@@ -443,7 +443,7 @@ def simplify_category_name(category_name):
         return match.group(1)
     return category_name
 
-def completeness_autograder(sentences, categories, model="gpt-4.1"):
+def completeness_autograder(sentences, categories, model):
     """
     Autograder that evaluates if sentences belong to any of the provided categories.
     
@@ -564,7 +564,7 @@ Only include the JSON object in your response, with no additional text before or
             "raw_response": response
         }
 
-def accuracy_autograder(sentences, categories, ground_truth_labels, model="gpt-4.1", n_autograder_examples=100):
+def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_autograder_examples):
     """
     Binary autograder that evaluates each cluster independently against examples from outside the cluster.
     
@@ -884,7 +884,7 @@ def generate_representative_examples(cluster_centers, texts, cluster_labels, exa
     return representative_examples
 
 
-def generate_category_descriptions(cluster_centers, model_name, n_description_examples, representative_examples):
+def generate_category_descriptions(cluster_centers, model_name, evaluator_model, n_description_examples, representative_examples):
     """
     Generate descriptions for each cluster based on most representative sentences.
     Uses half top examples and half random examples from the cluster.
@@ -924,8 +924,9 @@ def generate_category_descriptions(cluster_centers, model_name, n_description_ex
     
     # Generate descriptions in batch
     categories = generate_cluster_descriptions(
+        model_name,
         cluster_examples_list, 
-        model_name=model_name, 
+        evaluator_model,
         n_trace_examples=3
     )
     
@@ -933,7 +934,7 @@ def generate_category_descriptions(cluster_centers, model_name, n_description_ex
     return categories
 
 
-def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder_examples):
+def evaluate_clustering_accuracy(texts, cluster_labels, categories, model, n_autograder_examples):
     """
     Evaluate clustering using the binary accuracy autograder.
     Tests each cluster independently against examples from other clusters.
@@ -961,8 +962,7 @@ def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder
     # Run binary autograder
     for _ in range(3):
         try:
-            results = accuracy_autograder(texts, categories, str_cluster_labels, 
-                                               n_autograder_examples=n_autograder_examples)
+            results = accuracy_autograder(texts, categories, str_cluster_labels, model, n_autograder_examples)
             break
         except Exception as e:
             print_and_flush(f"Error running accuracy autograder: {e}")
@@ -972,7 +972,7 @@ def evaluate_clustering_accuracy(texts, cluster_labels, categories, n_autograder
     print_and_flush(f"Evaluated clustering accuracy in {time.time() - start_time} seconds")
     return results
 
-def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
+def evaluate_clustering_completeness(texts, categories, model, n_test_examples):
     """
     Evaluate clustering using the completeness autograder with a random sample of texts.
     
@@ -1000,7 +1000,7 @@ def evaluate_clustering_completeness(texts, categories, n_test_examples=50):
     # Run autograder on the sampled texts
     for _ in range(3):
         try:
-            results = completeness_autograder(test_texts, categories)
+            results = completeness_autograder(test_texts, categories, model)
             break
         except Exception as e:
             print_and_flush(f"Error running completeness autograder: {e}")
@@ -1046,12 +1046,12 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     
     # Generate category descriptions
     categories = generate_category_descriptions(
-        cluster_centers, model_name, n_description_examples, representative_examples
+        cluster_centers, model_name, "gpt-4.1", n_description_examples, representative_examples
     )
     
     # Run binary accuracy autograder (evaluates each cluster independently)
     accuracy_results = evaluate_clustering_accuracy(
-        texts, cluster_labels, categories, n_autograder_examples
+        texts, cluster_labels, categories, "gpt-4.1", n_autograder_examples
     )
     
     # Compute centroid orthogonality
@@ -1067,7 +1067,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     }
     
     # Optionally run completeness autograder
-    completeness_results = evaluate_clustering_completeness(texts, categories)
+    completeness_results = evaluate_clustering_completeness(texts, categories, "gpt-4.1", 50)
     results["assigned_fraction"] = completeness_results["assigned_fraction"]
     results["category_counts"] = completeness_results["category_counts"]
 
