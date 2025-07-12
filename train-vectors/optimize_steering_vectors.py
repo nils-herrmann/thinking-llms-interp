@@ -57,7 +57,7 @@ args, _ = parser.parse_known_args()
 ANNOTATION_PATTERN = re.compile(r'\["([\d.]+):(\S+?)"\](.*?)\["end-section"\]', re.DOTALL)
 CATEGORY_PATTERN = re.compile(r'\["[\d.]+:(\S+?)"\]')
 
-def get_label_positions_optimized(annotated_thinking, response_text, tokenizer, context_sentences=0):
+def get_label_positions(annotated_thinking, response_text, tokenizer, context_sentences=0):
     """Parse SAE annotations and find token positions for each label"""
     label_positions = {}
     
