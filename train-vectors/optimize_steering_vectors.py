@@ -53,14 +53,17 @@ parser.add_argument("--grad_clip", type=float, default=1.0,
                     help="Maximum L2 norm of gradients for gradient clipping. None means no clipping.")
 args, _ = parser.parse_known_args()
 
-def get_label_positions(annotated_thinking, response_text, tokenizer, context_sentences=0):
+# At module level
+ANNOTATION_PATTERN = re.compile(r'\["([\d.]+):(\S+?)"\](.*?)\["end-section"\]', re.DOTALL)
+CATEGORY_PATTERN = re.compile(r'\["[\d.]+:(\S+?)"\]')
+
+def get_label_positions_optimized(annotated_thinking, response_text, tokenizer, context_sentences=0):
     """Parse SAE annotations and find token positions for each label"""
     label_positions = {}
     
     # Use a pattern that captures labeled segments in the format [activation:category-name] text [end-section]
     # Now supporting activation strength values in the format [56.86:category-name]
-    pattern = r'\["([\d.]+):(\S+?)"\](.*?)\["end-section"\]'
-    matches = list(re.finditer(pattern, annotated_thinking, re.DOTALL))
+    matches = list(ANNOTATION_PATTERN.finditer(annotated_thinking))
     
     # Create character to token mapping once
     char_to_token = utils.get_char_to_token_map(response_text, tokenizer)
@@ -286,8 +289,7 @@ def get_sorted_categories(responses_data):
             continue
             
         # Extract category names from annotated thinking
-        pattern = r'\["[\d.]+:(\S+?)"\]'
-        matches = re.finditer(pattern, resp['annotated_thinking'])
+        matches = CATEGORY_PATTERN.finditer(resp['annotated_thinking'])
         for match in matches:
             category = match.group(1).strip()
             categories.add(category)
