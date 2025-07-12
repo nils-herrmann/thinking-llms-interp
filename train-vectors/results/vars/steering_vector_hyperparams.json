@@ -129,34 +129,34 @@
       }
     },
     "14": {
-      "category": "metacognitive-prompting-for-deliberation-or-reconsideration",
+      "category": "problem-restatement-&-task-clarification",
       "hyperparameters": {
         "layer": 6,
-        "max_iters": 10,
+        "max_iters": 30,
         "learning_rates": [
-          0.5
+          0.05
         ],
-        "best_lr": 0.5,
+        "best_lr": 0.05,
         "context_sentences": 1,
         "seed": 42,
-        "n_training_examples": 128,
-        "vector_norm": 5.619999885559082,
+        "n_training_examples": 256,
+        "vector_norm": 5.399999141693115,
         "grad_clip": 1.0
       }
     },
     "15": {
-      "category": "problem-framing-and-task-articulation",
+      "category": "problem-statement-fact-recitation",
       "hyperparameters": {
         "layer": 6,
-        "max_iters": 10,
+        "max_iters": 30,
         "learning_rates": [
-          0.5
+          0.05
         ],
-        "best_lr": 0.5,
+        "best_lr": 0.05,
         "context_sentences": 1,
         "seed": 42,
-        "n_training_examples": 128,
-        "vector_norm": 3.4200000762939453,
+        "n_training_examples": 256,
+        "vector_norm": 2.0,
         "grad_clip": 1.0
       }
     },
