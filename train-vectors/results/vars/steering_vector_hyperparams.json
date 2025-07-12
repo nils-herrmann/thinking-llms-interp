@@ -177,34 +177,34 @@
       }
     },
     "16": {
-      "category": "projecting-downstream-consequences-and-ripple-effects",
+      "category": "procedural-next-step-declaration",
       "hyperparameters": {
         "layer": 6,
-        "max_iters": 10,
+        "max_iters": 30,
         "learning_rates": [
-          0.5
+          0.05
         ],
-        "best_lr": 0.5,
+        "best_lr": 0.05,
         "context_sentences": 1,
         "seed": 42,
-        "n_training_examples": 128,
-        "vector_norm": 3.9999992847442627,
+        "n_training_examples": 256,
+        "vector_norm": 0.9999999403953552,
         "grad_clip": 1.0
       }
     },
     "17": {
-      "category": "retrieval-and-articulation-of-background-knowledge-or-prototypical-examples",
+      "category": "self-instruction-/-immediate-sub-step-directive",
       "hyperparameters": {
         "layer": 6,
-        "max_iters": 10,
+        "max_iters": 30,
         "learning_rates": [
-          0.5
+          0.05
         ],
-        "best_lr": 0.5,
+        "best_lr": 0.05,
         "context_sentences": 1,
         "seed": 42,
-        "n_training_examples": 128,
-        "vector_norm": 2.859999895095825,
+        "n_training_examples": 256,
+        "vector_norm": 7.0723652839660645,
         "grad_clip": 1.0
       }
     },
