@@ -225,18 +225,18 @@
       }
     },
     "18": {
-      "category": "step-by-step-explicit-calculation-and-arithmetic-execution",
+      "category": "self-monitoring-/-error-checking-statements",
       "hyperparameters": {
         "layer": 6,
-        "max_iters": 10,
+        "max_iters": 30,
         "learning_rates": [
-          0.005
+          0.05
         ],
-        "best_lr": 0.005,
+        "best_lr": 0.05,
         "context_sentences": 1,
         "seed": 42,
-        "n_training_examples": 128,
-        "vector_norm": 0.9999999403953552,
+        "n_training_examples": 256,
+        "vector_norm": 7.343339443206787,
         "grad_clip": 1.0
       }
     },
@@ -301,6 +301,22 @@
         "seed": 42,
         "n_training_examples": 128,
         "vector_norm": 3.119999885559082,
+        "grad_clip": 1.0
+      }
+    },
+    "19": {
+      "category": "speculative-hypothesis-&-example-generation",
+      "hyperparameters": {
+        "layer": 6,
+        "max_iters": 30,
+        "learning_rates": [
+          0.05
+        ],
+        "best_lr": 0.05,
+        "context_sentences": 1,
+        "seed": 42,
+        "n_training_examples": 60,
+        "vector_norm": 5.1425275802612305,
         "grad_clip": 1.0
       }
     }
