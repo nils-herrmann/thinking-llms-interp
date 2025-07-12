@@ -65,6 +65,8 @@ def visualize_results(results_json_path):
     model_id = results['model_id']
     layer = results['layer']
     method = results['clustering_method']
+
+    print(f"Cluster range available: {cluster_range}")
     
     cluster_range_to_keep = [10,20,30,40,50]
     indices_to_keep = [cluster_range.index(x) for x in cluster_range_to_keep]
@@ -73,7 +75,7 @@ def visualize_results(results_json_path):
     f1_scores = [f1_scores[i] for i in indices_to_keep]
     assignment_rates = [assignment_rates[i] for i in indices_to_keep]
     orthogonality_scores = [orthogonality_scores[i] for i in indices_to_keep]
-    optimal_n_clusters = cluster_range_to_keep[indices_to_keep.index(optimal_n_clusters)]
+    # optimal_n_clusters = cluster_range_to_keep[indices_to_keep.index(optimal_n_clusters)]
 
     
     # Create figure with 3x2 subplots
@@ -91,7 +93,7 @@ def visualize_results(results_json_path):
     axs[0, 0].set_xlabel('Number of Clusters')
     axs[0, 0].set_ylabel('Final Score')
     axs[0, 0].set_title('Final Score vs. Number of Clusters')
-    axs[0, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    # axs[0, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[0, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
@@ -100,7 +102,7 @@ def visualize_results(results_json_path):
     axs[0, 1].set_xlabel('Number of Clusters')
     axs[0, 1].set_ylabel('Accuracy')
     axs[0, 1].set_title('Autograder Accuracy vs. Number of Clusters')
-    axs[0, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    # axs[0, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[0, 1].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
@@ -109,7 +111,7 @@ def visualize_results(results_json_path):
     axs[1, 0].set_xlabel('Number of Clusters')
     axs[1, 0].set_ylabel('Average F1 Score')
     axs[1, 0].set_title('Average F1 Score vs. Number of Clusters')
-    axs[1, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    # axs[1, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[1, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
@@ -118,7 +120,7 @@ def visualize_results(results_json_path):
     axs[1, 1].set_xlabel('Number of Clusters')
     axs[1, 1].set_ylabel('Orthogonality')
     axs[1, 1].set_title('Centroid Orthogonality vs. Number of Clusters')
-    axs[1, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    # axs[1, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[1, 1].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
@@ -127,7 +129,7 @@ def visualize_results(results_json_path):
     axs[2, 0].set_xlabel('Number of Clusters')
     axs[2, 0].set_ylabel('Assignment Rate')
     axs[2, 0].set_title('Completeness: Assignment Rate vs. Number of Clusters')
-    axs[2, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    # axs[2, 0].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
     for x in vertical_lines_x:
         axs[2, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
