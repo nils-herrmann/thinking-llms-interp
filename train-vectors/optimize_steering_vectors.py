@@ -14,6 +14,7 @@ import gc
 from utils import steering_opt
 import math
 from tqdm import tqdm
+import traceback
 
 # %% Parse arguments
 parser = argparse.ArgumentParser(description="Optimize steering vectors from annotated responses")
@@ -566,6 +567,7 @@ def main():
             
         except Exception as e:
             print(f"Error optimizing vector for category {target_category} with lr {lr}: {e}")
+            traceback.print_exc()
             continue
     
     if not all_results:
