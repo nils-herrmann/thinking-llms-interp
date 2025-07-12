@@ -89,7 +89,8 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     # For methods that require n_clusters, use the original code
     detailed_results_dict = {}
     
-    cluster_range = list(range(args.min_clusters, args.max_clusters + 1))
+    # cluster_range = list(range(args.min_clusters, args.max_clusters + 1))
+    cluster_range = [10,20,30,40,50]
     
     print_and_flush(f"Testing {len(cluster_range)} different cluster counts...")
     for n_clusters in tqdm(cluster_range, desc=f"{clustering_method.capitalize()} progress"):
