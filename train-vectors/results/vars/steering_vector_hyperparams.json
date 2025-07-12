@@ -161,18 +161,18 @@
       }
     },
     "4": {
-      "category": "expression-of-uncertainty-or-knowledge-limitation",
+      "category": "background\u2010knowledge-recall-/-fact-stating",
       "hyperparameters": {
         "layer": 6,
-        "max_iters": 10,
+        "max_iters": 30,
         "learning_rates": [
-          0.005
+          0.05
         ],
-        "best_lr": 0.005,
+        "best_lr": 0.05,
         "context_sentences": 1,
         "seed": 42,
-        "n_training_examples": 128,
-        "vector_norm": 0.9999999403953552,
+        "n_training_examples": 50,
+        "vector_norm": 1.0,
         "grad_clip": 1.0
       }
     },
@@ -209,18 +209,18 @@
       }
     },
     "5": {
-      "category": "final-explicit-answer-statement",
+      "category": "explicit-arithmetic-scratch-pad",
       "hyperparameters": {
         "layer": 6,
-        "max_iters": 10,
+        "max_iters": 30,
         "learning_rates": [
           0.05
         ],
         "best_lr": 0.05,
         "context_sentences": 1,
         "seed": 42,
-        "n_training_examples": 128,
-        "vector_norm": 4.039999961853027,
+        "n_training_examples": 256,
+        "vector_norm": 7.6809515953063965,
         "grad_clip": 1.0
       }
     },
