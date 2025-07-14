@@ -546,14 +546,59 @@ def split_into_sentences(text, min_words=3):
     Returns:
         list: List of cleaned sentences with at least 3 words each
     """
-    # Split on sentence-ending punctuation, newlines, but avoid splitting on decimal numbers and single letter abbreviations
-    # The regex matches: 
-    # - (?<!\b\w)[!;] for exclamation and semicolons not preceded by single letters (avoids "k!" splits)
-    # - \? for question marks (always split)
-    # - (?<!\d)(?<!\b\w)\.(?!\d) matches periods not between digits and not after single letters (avoids "E." splits)
-    # - (?<=\d)\.(?=\s|"|$) matches periods after digits followed by space, quote, or end (like "$5,000.")
-    # - \n+ matches one or more newlines
-    sentences = re.split(r'(?<!\b\w)[!;]|\?|(?<!\d)(?<!\b\w)\.(?!\d)|(?<=\d)\.(?=\s|"|$)|\n+', text)
+    # Split after sentence-ending punctuation and newlines while keeping delimiters
+    # Use positive lookbehind to split after delimiters, but with edge case handling
+    
+    # First handle edge cases by temporarily replacing problematic patterns
+    # Protect decimal numbers like "3.14" and single letter abbreviations like "E. coli"
+    protected_text = text
+    replacements = []
+    
+    # Protect decimal numbers
+    for match in re.finditer(r'\d+\.\d+', text):
+        placeholder = f"__DECIMAL_{len(replacements)}__"
+        replacements.append((placeholder, match.group()))
+        protected_text = protected_text.replace(match.group(), placeholder)
+    
+    # Protect single letter abbreviations (letter followed by period and space/word)
+    for match in re.finditer(r'\b[A-Za-z]\.\s+[A-Za-z]', text):
+        placeholder = f"__ABBREV_{len(replacements)}__"
+        replacements.append((placeholder, match.group()))
+        protected_text = protected_text.replace(match.group(), placeholder)
+    
+    # Protect mathematical expressions like "k!" (letter followed by exclamation)
+    for match in re.finditer(r'\b[A-Za-z]!', text):
+        placeholder = f"__MATH_{len(replacements)}__"
+        replacements.append((placeholder, match.group()))
+        protected_text = protected_text.replace(match.group(), placeholder)
+    
+    # Handle consecutive punctuation by normalizing it first
+    # Replace consecutive punctuation with single punctuation for splitting
+    consecutive_punct_pattern = r'([.!?;])\1+'
+    consecutive_matches = []
+    for match in re.finditer(consecutive_punct_pattern, protected_text):
+        consecutive_matches.append((match.start(), match.end(), match.group()))
+    
+    # Split using simple lookbehind after normalizing consecutive punctuation
+    normalized_text = re.sub(consecutive_punct_pattern, r'\1', protected_text)
+    sentences = re.split(r'(?<=[.!?;\n])', normalized_text)
+    
+    # Restore consecutive punctuation in the sentences
+    if consecutive_matches:
+        # Map back to original positions
+        for start, end, original in consecutive_matches:
+            # Find which sentence contains this punctuation and restore it
+            for i, sentence in enumerate(sentences):
+                if sentence and start < len(protected_text):
+                    # This is a simplified restoration - may need refinement for complex cases
+                    if original[0] in sentence and len(original) > 1:
+                        sentences[i] = sentence.replace(original[0], original, 1)
+    
+    # Restore protected patterns
+    for placeholder, original in replacements:
+        sentences = [s.replace(placeholder, original) for s in sentences]
+    
+    # Clean up sentences
     sentences = [s.strip() for s in sentences if s.strip()]
     sentences = [s for s in sentences if len(s.split()) >= min_words]
     
