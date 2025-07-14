@@ -20,6 +20,8 @@ import traceback
 parser = argparse.ArgumentParser(description="Optimize steering vectors from annotated responses")
 parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-8B",
                     help="Model to train steering vectors for")
+parser.add_argument("--n_training_examples", type=int, default=2048,
+                    help="Number of training examples to use per category")
 parser.add_argument("--test_examples_pct", type=float, default=0.30,
                     help="Percentage of examples to use for testing (rest used for training)")
 parser.add_argument("--save_path", type=str, default="results/vars/optimized_vectors",
@@ -282,7 +284,7 @@ def calculate_perplexity(model, tokenizer, examples):
         print(f"Error in batch perplexity calculation: {e}")
         return [float('inf')] * len(examples)
 
-def extract_examples_for_category(responses_data, category_name, test_examples_pct, tokenizer, model):
+def extract_examples_for_category(responses_data, category_name, test_examples_pct, tokenizer, model, n_training_examples):
     """Extract examples for a specific category from the responses data and split into training and test sets"""
     examples_for_category = []
     
@@ -366,7 +368,13 @@ def extract_examples_for_category(responses_data, category_name, test_examples_p
     # Sort by perplexity score and use all valid candidates
     sorted_by_perplexity = sorted(valid_candidates, key=lambda x: x['perplexity_score'], reverse=True)
     
-    selected_examples = sorted_by_perplexity
+    # Calculate how many total examples we need to get the desired number of training examples
+    # after the train/test split
+    total_examples_needed = int(n_training_examples / (1 - test_examples_pct))
+    
+    # Limit to available examples and desired total
+    max_examples = min(len(sorted_by_perplexity), total_examples_needed)
+    selected_examples = sorted_by_perplexity[:max_examples]
 
     #random.shuffle(selected_examples)
 
@@ -656,7 +664,8 @@ def main():
         target_category, 
         args.test_examples_pct, 
         tokenizer, 
-        model
+        model,
+        args.n_training_examples
     )
 
     ex_activations = [ex['activation'] for ex in training_examples]
