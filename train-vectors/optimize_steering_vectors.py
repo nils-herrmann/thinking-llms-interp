@@ -16,9 +16,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import utils
 import gc
 from utils import steering_opt
-import math
 from tqdm import tqdm
 import traceback
+import wandb
 
 # %% Parse arguments
 parser = argparse.ArgumentParser(description="Optimize steering vectors from annotated responses")
@@ -58,6 +58,10 @@ parser.add_argument("--grad_clip", type=float, default=None,
                     help="Maximum L2 norm of gradients for gradient clipping. None means no clipping.")
 parser.add_argument("--steering_token_window", type=int, default=50,
                     help="Number of previous tokens in the target completion to apply the steering vector to (None means all)")
+parser.add_argument("--use_wandb", action="store_true", default=False,
+                    help="Use wandb for logging")
+parser.add_argument("--wandb_project", type=str, default="optimize-steering-vectors",
+                    help="Wandb project name")
 args, _ = parser.parse_known_args()
 
 # At module level
@@ -486,6 +490,22 @@ def main():
     target_category = all_categories[args.steering_vector_idx]
     print(f"\nOptimizing vector for category: {target_category} (index {args.steering_vector_idx})")
     
+    # Initialize wandb
+    wandb_run = None
+    if args.use_wandb:
+        if wandb is None:
+            raise ImportError("wandb is not installed. Please install it with `pip install wandb`")
+        
+        model_name_short = args.model.split('/')[-1]
+        run_name = f"{model_name_short}_layer{args.layer}_idx{args.steering_vector_idx}_{target_category}"
+        
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config=args,
+            reinit=True
+        )
+
     # Extract examples only for the target category
     print(f"Extracting examples for category {target_category}...")
     training_examples, test_examples, max_activation = extract_examples_for_category(
@@ -538,7 +558,8 @@ def main():
                 return_loss_history=True,
                 steering_token_window=args.steering_token_window,
                 eval_prompts=eval_prompts,
-                eval_target_completions=eval_target_completions
+                eval_target_completions=eval_target_completions,
+                wandb_run=wandb_run
             )
             
             # Store results
@@ -600,6 +621,14 @@ def main():
     }
     save_hyperparameters(hyperparams, model_name_short, args.steering_vector_idx, target_category)
     
+    # Log best hyperparameters and summary to wandb
+    if wandb_run:
+        wandb_run.config.update(hyperparams, allow_val_change=True)
+        wandb_run.summary['best_lr'] = best_lr
+        wandb_run.summary['final_loss'] = best_result['final_loss']
+        if 'final_eval_loss' in best_result['loss_info']:
+            wandb_run.summary['final_eval_loss'] = best_result['loss_info']['final_eval_loss']
+
     # Save training and evaluation losses for best learning rate in the format expected by visualization
     losses_path = f"results/vars/losses_{model_name_short}_idx_{args.steering_vector_idx}.pt"
     
@@ -647,6 +676,12 @@ def main():
 
     torch.save(optimized_vectors, vectors_path)
     print(f"\nSaved optimized vectors to {vectors_path}")
+
+    if wandb_run:
+        artifact = wandb.Artifact(f'{model_name_short}_{target_category}', type='model')
+        artifact.add_file(vectors_path)
+        wandb_run.log_artifact(artifact)
+        wandb_run.finish()
 
 if __name__ == "__main__":
     main() 

@@ -104,7 +104,8 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
                           max_norm=None, starting_norm=1, debug=False,
                           return_info=True, return_loss_history=False,
                           steering_token_window=None,
-                          eval_prompts=None, eval_target_completions=None):
+                          eval_prompts=None, eval_target_completions=None,
+                          wandb_run=None):
     """
     Simplified steering vector optimization that minimizes next token prediction loss
     for target completions with proper minibatching.
@@ -131,6 +132,7 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
         steering_token_window: If not None, apply the steering vector only to the last N tokens of the target completion.
         eval_prompts: List of evaluation prompts (optional)
         eval_target_completions: List of evaluation target completions (optional)
+        wandb_run: wandb run object for logging (optional)
     
     Returns:
         vector: Optimized steering vector
@@ -210,12 +212,17 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
     latest_train_loss = None
     latest_eval_loss = None
     
+    # Initialize here to avoid UnboundLocalError if max_iters is 0
+    total_loss = 0.0
+    num_batches = 0
+    iteration = 0
+
     for iteration in range(max_iters):
         # Shuffle data
         indices = list(range(len(prompts)))
         random.shuffle(indices)
         
-        total_loss = 0
+        total_loss = 0.0
         num_batches = 0
         
         # Process in minibatches
@@ -308,7 +315,7 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
                 logits = outputs.logits  # [batch_size, seq_len, vocab_size]
             
             # Calculate loss for each example in the batch
-            batch_loss = 0
+            batch_loss = torch.tensor(0.0, device=model.device)
             valid_examples = 0
             
             for i, (prompt_len, target_len) in enumerate(zip(batch_prompt_lengths, batch_target_lengths)):
@@ -342,7 +349,7 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
                 
                 # Calculate cross entropy loss
                 loss = torch.nn.functional.cross_entropy(target_logits, target_labels, reduction='mean')
-                batch_loss += loss
+                batch_loss = batch_loss + loss
                 valid_examples += 1
             
             # Average loss over valid examples in batch
@@ -376,6 +383,10 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
                 # Update latest train loss
                 latest_train_loss = batch_loss.item()
                 
+                if wandb_run:
+                    log_data = {f'train_loss': batch_loss.item(), 'learning_rate': scheduler.get_last_lr()[0]}
+                    wandb_run.log(log_data)
+
                 # Update progress bar description
                 if latest_eval_loss is not None:
                     pbar.set_description(f"Epoch {iteration+1}/{max_iters} - Train: {latest_train_loss:.6f} Eval: {latest_eval_loss:.6f}")
@@ -396,6 +407,8 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
             )
             eval_loss_history.append(eval_loss)
             latest_eval_loss = eval_loss
+            if wandb_run:
+                wandb_run.log({f'eval_loss': eval_loss})
             # Update progress bar description with latest eval loss
             if latest_train_loss is not None:
                 pbar.set_description(f"Epoch {iteration+1}/{max_iters} - Train: {latest_train_loss:.6f} Eval: {latest_eval_loss:.6f}")
