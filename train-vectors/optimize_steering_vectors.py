@@ -492,13 +492,11 @@ def main():
     
     # Initialize wandb
     wandb_run = None
+    lrs_str = "-".join([str(lr) for lr in learning_rates])
+    run_name = f"{model_name_short}_layer{args.layer}_idx{args.steering_vector_idx}_lr{lrs_str}_n{args.n_training_examples}"
     if args.use_wandb:
         if wandb is None:
             raise ImportError("wandb is not installed. Please install it with `pip install wandb`")
-        
-        model_name_short = args.model.split('/')[-1]
-        lrs_str = "-".join([str(lr) for lr in learning_rates])
-        run_name = f"{model_name_short}_layer{args.layer}_idx{args.steering_vector_idx}_lr{lrs_str}_n{args.n_training_examples}"
         
         wandb_run = wandb.init(
             project=args.wandb_project,
@@ -664,21 +662,15 @@ def main():
     gc.collect()
     torch.cuda.empty_cache()
     
-    # Save all vectors
-    # Load existing optimized vectors if they exist
-    vectors_path = f"{args.save_path}_{model_name_short}.pt"
+    # Save best vector
+    vectors_path = f"{args.save_path}/{model_name_short}_layer{args.layer}_idx{args.steering_vector_idx}.pt"
     optimized_vectors = {}
-    if os.path.exists(vectors_path):
-        print(f"\nLoading existing optimized vectors from {vectors_path}")
-        optimized_vectors = torch.load(vectors_path)
-
     optimized_vectors[target_category] = best_result['vector']
-
     torch.save(optimized_vectors, vectors_path)
     print(f"\nSaved optimized vectors to {vectors_path}")
 
     if wandb_run:
-        artifact = wandb.Artifact(f'{model_name_short}_{target_category}', type='model')
+        artifact = wandb.Artifact(run_name, type='model')
         artifact.add_file(vectors_path)
         wandb_run.log_artifact(artifact)
         wandb_run.finish()
