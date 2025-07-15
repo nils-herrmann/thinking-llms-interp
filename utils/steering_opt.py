@@ -295,11 +295,14 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
             def batch_steering_hook(module, args):
                 x = args[0]  # [batch_size, seq_len, hidden_dim]
                 batch_size = x.shape[0]
+
+                # Move vector to the same device as input tensor
+                steer_vector = vector.to(x.device)
                 
                 # Apply steering vector to each example according to its slice
                 for i in range(batch_size):
                     steering_slice = steering_token_slices[i]
-                    x[i, steering_slice] = x[i, steering_slice] + vector
+                    x[i, steering_slice] = x[i, steering_slice] + steer_vector
                 
                 return x
             
@@ -523,7 +526,7 @@ def compute_evaluation_loss(model, tokenizer, vector, layer,
             
             # Forward pass with steering
             with hf_hooks_contextmanager(model, hook_infos):
-                inputs = {'input_ids': full_sequence.unsqueeze(0).to(model.device)}
+                inputs = {'input_ids': full_sequence.unsqueeze(0)}
                 outputs = model(**inputs)
                 logits = outputs.logits[0]  # Remove batch dimension
             
