@@ -384,7 +384,7 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
                 latest_train_loss = batch_loss.item()
                 
                 if wandb_run:
-                    log_data = {f'train_loss': batch_loss.item(), 'learning_rate': scheduler.get_last_lr()[0]}
+                    log_data = {'train_loss': batch_loss.item(), 'learning_rate': scheduler.get_last_lr()[0], 'epoch': iteration}
                     wandb_run.log(log_data)
 
                 # Update progress bar description
@@ -408,7 +408,7 @@ def optimize_vector_simple(model, tokenizer, prompts, target_completions, layer,
             eval_loss_history.append(eval_loss)
             latest_eval_loss = eval_loss
             if wandb_run:
-                wandb_run.log({f'eval_loss': eval_loss})
+                wandb_run.log({'eval_loss': eval_loss, 'epoch': iteration})
             # Update progress bar description with latest eval loss
             if latest_train_loss is not None:
                 pbar.set_description(f"Epoch {iteration+1}/{max_iters} - Train: {latest_train_loss:.6f} Eval: {latest_eval_loss:.6f}")
