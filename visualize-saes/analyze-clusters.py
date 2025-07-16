@@ -23,10 +23,10 @@ for layer in layers:
 
     for n_clusters in n_cluster_range:
         print(f"=== {n_clusters} clusters ===")
-        cluster_data = clusters_detailed_results[str(n_clusters)] # dict_keys(['accuracy', 'categories', 'orthogonality', 'assigned_fraction', 'category_counts', 'detailed_results'])
+        cluster_data = clusters_detailed_results[str(n_clusters)] # dict_keys(['accuracy', 'categories', 'orthogonality', 'assigned_fraction', 'avg_confidence', 'category_counts', 'detailed_results'])
         accuracy = cluster_data['accuracy']
         orthogonality = cluster_data['orthogonality']
-        completeness = cluster_data['assigned_fraction']
+        completeness = cluster_data['avg_confidence']
         
         print(f"Accuracy: {accuracy}")
         # print(f"Categories: {cluster_data['categories']}")

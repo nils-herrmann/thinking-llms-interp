@@ -243,8 +243,10 @@ for repetition in range(REPETITIONS):
     print(f"Total sentences evaluated: {completeness_results['total_sentences']}")
     print(f"Assigned sentences: {completeness_results['assigned']} ({completeness_results['assigned_fraction']:.2f})")
     print(f"Not assigned sentences: {completeness_results['not_assigned']} ({completeness_results['not_assigned_fraction']:.2f})")
+    print(f"Average confidence: {completeness_results.get('avg_confidence', 0.0):.2f}")
+    print(f"Category average confidences: {completeness_results.get('category_avg_confidences', {})}")
 
-    completeness_scores.append(completeness_results['assigned_fraction'])
+    completeness_scores.append(completeness_results['avg_confidence'])
 
 print("-"*100)
 print(f"Completeness scores: {completeness_scores}")
@@ -269,6 +271,8 @@ if "detailed_analysis" in completeness_results:
     print(f"Assignment accuracy: {completeness_metrics.get('assignment_accuracy', 0):.4f}")
     print(f"Assignment recall: {completeness_metrics.get('assignment_recall', 0):.4f}")
     print(f"Assignment precision: {completeness_metrics.get('assignment_precision', 0):.4f}")
+    print(f"Average confidence for correct assignments: {completeness_metrics.get('avg_correct_confidence', 0):.4f}")
+    print(f"Average confidence for incorrect assignments: {completeness_metrics.get('avg_incorrect_confidence', 0):.4f}")
     
     print(f"\nCorrect assignments: {completeness_metrics.get('correct_assignments', 0)}")
     print(f"Incorrect assignments: {completeness_metrics.get('incorrect_assignments', 0)}")
@@ -282,7 +286,8 @@ if "detailed_analysis" in completeness_results:
     for i, item in enumerate(detailed_analysis['correct_assignments'][:enumeration_length]):
         ground_truth_category_id = item['ground_truth_category']
         assigned_category_id = item['assigned_category'].split(" ")[1]
-        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} ({title_by_cluster[str(assigned_category_id)]})")
+        confidence = item.get('confidence', 0)
+        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} ({title_by_cluster[str(assigned_category_id)]}) | Confidence: {confidence}")
         print(f"     Explanation: {item['explanation']}")
         print(f"     Text: {item['sentence_text']}")
     if len(detailed_analysis['correct_assignments']) > enumeration_length:
@@ -291,7 +296,8 @@ if "detailed_analysis" in completeness_results:
     print(f"\n🔴 MISSED ASSIGNMENTS ({len(detailed_analysis['missed_assignments'])}): Should have been assigned but weren't")
     for i, item in enumerate(detailed_analysis['missed_assignments'][:enumeration_length]):
         ground_truth_category_id = item['ground_truth_category']
-        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']}")
+        confidence = item.get('confidence', 0)
+        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} | Confidence: {confidence}")
         print(f"     Explanation: {item['explanation']}")
         print(f"     Text: {item['sentence_text']}")
     if len(detailed_analysis['missed_assignments']) > enumeration_length:
@@ -301,7 +307,8 @@ if "detailed_analysis" in completeness_results:
     for i, item in enumerate(detailed_analysis['incorrect_assignments'][:enumeration_length]):
         ground_truth_category_id = item['ground_truth_category']
         assigned_category_id = item['assigned_category'].split(" ")[1]
-        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} ({title_by_cluster[str(assigned_category_id)]})")
+        confidence = item.get('confidence', 0)
+        print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} ({title_by_cluster[str(assigned_category_id)]}) | Confidence: {confidence}")
         print(f"     Explanation: {item['explanation']}")
         print(f"     Text: {item['sentence_text']}")
     if len(detailed_analysis['incorrect_assignments']) > enumeration_length:

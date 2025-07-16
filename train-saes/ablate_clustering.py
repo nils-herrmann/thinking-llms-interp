@@ -130,6 +130,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     final_accuracy_scores = [merged_detailed_results[str(n)]['accuracy'] for n in final_cluster_range]
     final_orthogonality_scores = [merged_detailed_results[str(n)]['orthogonality'] for n in final_cluster_range]
     final_assignment_rates = [merged_detailed_results[str(n)].get('assigned_fraction', 0) for n in final_cluster_range]
+    final_confidence_scores = [merged_detailed_results[str(n)].get('avg_confidence', 0.0) for n in final_cluster_range]
 
     final_f1_scores = []
     final_precision_scores = []
@@ -169,6 +170,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         "recall_scores": final_recall_scores,
         "f1_scores": final_f1_scores,
         "assignment_rates": final_assignment_rates,
+        "confidence_scores": final_confidence_scores,
         "orthogonality_scores": final_orthogonality_scores,
         "optimal_n_clusters": optimal_n_clusters,
         "optimal_accuracy": final_accuracy_scores[optimal_idx],
@@ -176,6 +178,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         "optimal_recall": final_recall_scores[optimal_idx],
         "optimal_f1": final_f1_scores[optimal_idx],
         "optimal_assignment_rate": final_assignment_rates[optimal_idx],
+        "optimal_confidence": final_confidence_scores[optimal_idx],
         "optimal_orthogonality": final_orthogonality_scores[optimal_idx],
         "detailed_results": merged_detailed_results
     }

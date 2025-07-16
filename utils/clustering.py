@@ -632,7 +632,8 @@ def completeness_autograder(sentences, categories, model, ground_truth_labels=No
         max_sentences_per_prompt (int): Maximum number of sentences to process per prompt
     
     Returns:
-        dict: Statistics about category assignments including detailed analysis of assignments vs ground truth
+        dict: Statistics about category assignments including detailed analysis of assignments vs ground truth,
+              and confidence metrics
     """
     # Format the categories into a readable list for the prompt
     categories_text = "\n\n".join([f"Category {cluster_id}: {title}\nDescription: {description}" 
@@ -695,6 +696,11 @@ If you answer "no" to questions 1-2 or "yes" to question 3, assign "None".
 
 **Remember: False positives (incorrect assignments) are worse than false negatives (missed assignments). When uncertain, choose "None".**
 
+## Confidence Scoring:
+For each sentence, you must also provide a confidence score:
+- If assigning to a category: Use a score from 1-10 (1 = barely fits, 10 = perfect example)
+- If assigning "None": Always use confidence score 0
+
 ## Response Format:
 Your response must follow this exact JSON format:
 ```json
@@ -703,7 +709,8 @@ Your response must follow this exact JSON format:
     {{
       "sentence_id": <sentence idx>,
       "explanation": "Brief explanation of your reasoning and why you were certain/uncertain",
-      "assigned_category": "Category <category idx>" (not the title, just the category index) or "None"
+      "assigned_category": "Category <category idx>" (not the title, just the category index) or "None",
+      "confidence": <integer from 0-10>
     }},
     ... (repeat for all sentences)
   ]
@@ -749,6 +756,7 @@ Only include the JSON object in your response, with no additional text before or
             "not_assigned": total_sentences,
             "assigned_fraction": 0,
             "not_assigned_fraction": 1.0,
+            "avg_confidence": 0.0,
             "parsing_errors": parsing_errors
         }
     
@@ -757,6 +765,11 @@ Only include the JSON object in your response, with no additional text before or
     not_assigned = 0
     category_counts = {str(cluster_id): 0 for cluster_id, _, _ in categories}
     category_counts["None"] = 0
+    
+    # Confidence tracking
+    total_confidence = 0.0
+    category_confidences = {str(cluster_id): [] for cluster_id, _, _ in categories}
+    category_confidences["None"] = []
     
     # Enhanced analysis if ground truth labels are provided
     detailed_analysis = {
@@ -771,18 +784,31 @@ Only include the JSON object in your response, with no additional text before or
     for item in all_categorizations:
         sentence_idx = item["sentence_id"]
         assigned_category = item["assigned_category"]
+        confidence = item.get("confidence", 0)
         explanation = item.get("explanation", "")
         sentence_text = sentences[sentence_idx]
+        
+        # Validate confidence scores
+        if assigned_category == "None" and confidence != 0:
+            print(f"Warning: Sentence {sentence_idx} assigned 'None' but has non-zero confidence {confidence}")
+            confidence = 0  # Force to 0 for "None" assignments
+        elif assigned_category != "None" and (confidence < 1 or confidence > 10):
+            print(f"Warning: Sentence {sentence_idx} has invalid confidence {confidence}, clamping to valid range")
+            confidence = max(1, min(10, confidence))
+        
+        total_confidence += confidence
         
         # Process assignment counts
         if assigned_category == "None":
             not_assigned += 1
             category_counts["None"] += 1
+            category_confidences["None"].append(confidence)
         else:
             assigned += 1
             # Extract just the cluster ID from "Category N" format
             category_id = simplify_category_name(assigned_category)
             category_counts[category_id] = category_counts.get(category_id, 0) + 1
+            category_confidences[category_id].append(confidence)
         
         # Enhanced analysis with ground truth if available
         if ground_truth_labels is not None and sentence_idx < len(ground_truth_labels) and sentence_idx < len(sentences):
@@ -795,6 +821,7 @@ Only include the JSON object in your response, with no additional text before or
                 "sentence_text": sentence_text,
                 "assigned_category": assigned_category,
                 "ground_truth_category": ground_truth,
+                "confidence": confidence,
                 "explanation": explanation
             }
             
@@ -815,6 +842,17 @@ Only include the JSON object in your response, with no additional text before or
     assigned_fraction = assigned / total_sentences if total_sentences > 0 else 0
     not_assigned_fraction = not_assigned / total_sentences if total_sentences > 0 else 0
     
+    # Calculate confidence metrics
+    avg_confidence = total_confidence / total_sentences if total_sentences > 0 else 0
+    
+    # Calculate average confidence by category
+    category_avg_confidences = {}
+    for category_id, confidences in category_confidences.items():
+        if confidences:
+            category_avg_confidences[category_id] = sum(confidences) / len(confidences)
+        else:
+            category_avg_confidences[category_id] = 0.0
+    
     # Calculate detailed metrics if ground truth is available
     completeness_metrics = {}
     if ground_truth_labels is not None:
@@ -827,13 +865,19 @@ Only include the JSON object in your response, with no additional text before or
         # Sentences that were assigned
         were_assigned = n_correct + n_incorrect
         
+        # Calculate confidence-based metrics
+        correct_confidences = [item["confidence"] for item in detailed_analysis["correct_assignments"]]
+        incorrect_confidences = [item["confidence"] for item in detailed_analysis["incorrect_assignments"]]
+        
         completeness_metrics = {
             "correct_assignments": n_correct,
             "incorrect_assignments": n_incorrect,
             "missed_assignments": n_missed,
             "assignment_accuracy": n_correct / were_assigned if were_assigned > 0 else 0,
             "assignment_recall": n_correct / should_be_assigned if should_be_assigned > 0 else 0,
-            "assignment_precision": n_correct / were_assigned if were_assigned > 0 else 0
+            "assignment_precision": n_correct / were_assigned if were_assigned > 0 else 0,
+            "avg_correct_confidence": sum(correct_confidences) / len(correct_confidences) if correct_confidences else 0,
+            "avg_incorrect_confidence": sum(incorrect_confidences) / len(incorrect_confidences) if incorrect_confidences else 0
         }
     
     result_dict = {
@@ -842,7 +886,10 @@ Only include the JSON object in your response, with no additional text before or
         "not_assigned": not_assigned,
         "assigned_fraction": assigned_fraction,
         "not_assigned_fraction": not_assigned_fraction,
+        "avg_confidence": avg_confidence,
         "category_counts": category_counts,
+        "category_confidences": category_confidences,
+        "category_avg_confidences": category_avg_confidences,
         "categorizations": all_categorizations,
         "detailed_analysis": detailed_analysis,
         "completeness_metrics": completeness_metrics
@@ -1370,7 +1417,10 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     str_cluster_labels = [str(label) for label in cluster_labels]
     completeness_results = evaluate_clustering_completeness(texts, categories, "o3", 500, str_cluster_labels)
     results["assigned_fraction"] = completeness_results["assigned_fraction"]
+    results["avg_confidence"] = completeness_results.get("avg_confidence", 0.0)
     results["category_counts"] = completeness_results["category_counts"]
+    results["category_confidences"] = completeness_results.get("category_confidences", {})
+    results["category_avg_confidences"] = completeness_results.get("category_avg_confidences", {})
     results["completeness_detailed"] = completeness_results.get("detailed_analysis", {})
     results["completeness_metrics"] = completeness_results.get("completeness_metrics", {})
 
