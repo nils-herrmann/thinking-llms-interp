@@ -23,7 +23,7 @@ for cluster in "$@"; do
         --has_bos_token True \
         --steering_vector_idx $cluster \
         --lr "1e-2" \
-        --use_activation_perplexity_selection
+        --use_activation_perplexity_selection \
         --use_wandb
 done
 
