@@ -1418,7 +1418,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     
     # Optionally run completeness autograder
     str_cluster_labels = [str(label) for label in cluster_labels]
-    completeness_results = evaluate_clustering_completeness(texts, categories, "o3", 500, str_cluster_labels)
+    completeness_results = evaluate_clustering_completeness(texts, categories, "gpt-4.1", 500, str_cluster_labels)
     results["assigned_fraction"] = completeness_results["assigned_fraction"]
     results["avg_confidence"] = completeness_results.get("avg_confidence", 0.0)
     results["category_counts"] = completeness_results["category_counts"]
