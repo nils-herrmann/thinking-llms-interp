@@ -12,9 +12,9 @@
         "context_sentences": 0,
         "seed": 42,
         "test_examples_pct": 1,
-        "n_training_examples": 1024,
-        "n_test_examples": 1024,
-        "vector_norm": 10.342799186706543,
+        "n_training_examples": 2048,
+        "n_test_examples": 2048,
+        "vector_norm": 12.203914642333984,
         "grad_clip": null,
         "minibatch_size": 8,
         "steering_token_window": 50
@@ -61,21 +61,21 @@
       }
     },
     "1": {
-      "category": "atomic-numeric-setup-&-micro-computation",
+      "category": "background-knowledge-assertion",
       "hyperparameters": {
-        "layer": 6,
-        "max_iters": 10,
+        "layer": 14,
+        "max_iters": 20,
         "learning_rates": [
-          0.05
+          0.01
         ],
-        "best_lr": 0.05,
-        "context_sentences": 1,
+        "best_lr": 0.01,
+        "context_sentences": 0,
         "seed": 42,
-        "test_examples_pct": 0.3,
-        "n_training_examples": 122,
-        "n_test_examples": 52,
-        "vector_norm": 4.71999979019165,
-        "grad_clip": 1.0,
+        "test_examples_pct": 1,
+        "n_training_examples": 2048,
+        "n_test_examples": 2048,
+        "vector_norm": 10.48349380493164,
+        "grad_clip": null,
         "minibatch_size": 8,
         "steering_token_window": 50
       }
@@ -101,21 +101,21 @@
       }
     },
     "2": {
-      "category": "background-knowledge-recall",
+      "category": "background-knowledge-retrieval",
       "hyperparameters": {
-        "layer": 6,
-        "max_iters": 10,
+        "layer": 14,
+        "max_iters": 20,
         "learning_rates": [
-          0.05
+          0.01
         ],
-        "best_lr": 0.05,
-        "context_sentences": 1,
+        "best_lr": 0.01,
+        "context_sentences": 0,
         "seed": 42,
-        "test_examples_pct": 0.3,
-        "n_training_examples": 121,
-        "n_test_examples": 51,
-        "vector_norm": 2.7799999713897705,
-        "grad_clip": 1.0,
+        "test_examples_pct": 1,
+        "n_training_examples": 2048,
+        "n_test_examples": 2048,
+        "vector_norm": 10.421478271484375,
+        "grad_clip": null,
         "minibatch_size": 8,
         "steering_token_window": 50
       }
