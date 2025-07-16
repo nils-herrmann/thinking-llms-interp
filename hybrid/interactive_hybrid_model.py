@@ -260,12 +260,34 @@ def hybrid_generate(thinking_model, base_model, base_tokenizer, thinking_input_i
     gc.collect()
     return base_output_ids, token_latent_info, per_token_perplexity, token_position, steering_selection
 
-def load_steering_vectors(model_id):
+def load_steering_vectors(model_id, thinking_model_id, thinking_layer, n_clusters):
     """Load steering vectors from train_vectors output"""
-    vectors_path = f"../train-vectors/results/vars/optimized_vectors_{model_id}.pt"
-    if not os.path.exists(vectors_path):
+    vectors_dir = "../train-vectors/results/vars/optimized_vectors"
+    if not os.path.exists(vectors_dir):
         return {}
-    return torch.load(vectors_path)
+    
+    # Get latent descriptions to map indices to titles
+    descriptions = get_latent_descriptions(thinking_model_id, thinking_layer, n_clusters)
+    
+    # Load all steering vector files
+    steering_vectors = {}
+    for filename in os.listdir(vectors_dir):
+        if filename.startswith(f"{model_id}_layer{thinking_layer}_idx") and filename.endswith(".pt"):
+            # Extract the index from filename
+            match = re.search(rf"{re.escape(model_id)}_layer{thinking_layer}_idx(\d+)\.pt", filename)
+            if match:
+                idx = int(match.group(1))
+                if idx in descriptions:
+                    # Load the steering vector
+                    vector_path = os.path.join(vectors_dir, filename)
+                    vector = torch.load(vector_path)
+                    
+                    # Get the latent title and format it as expected
+                    latent_title = descriptions[idx]["title"]
+                    key = latent_title.lower().replace(" ", "-")
+                    steering_vectors[key] = vector
+    
+    return steering_vectors
 
 def generate_latent_colors(latent_descriptions):
     colors = {}
@@ -370,8 +392,8 @@ def load_models_and_sae(args):
     sae = sae.to(thinking_model.device)
 
     print(f"Loading steering vectors and layer effects...")
-    steering_vectors = load_steering_vectors(base_model_id)
     descriptions = get_latent_descriptions(thinking_model_id, args.thinking_layer, args.n_clusters)
+    steering_vectors = load_steering_vectors(base_model_id, thinking_model_id, args.thinking_layer, args.n_clusters)
 
     return thinking_model, thinking_tokenizer, base_model, base_tokenizer, sae, steering_vectors, descriptions, thinking_model_id, base_model_id
 
