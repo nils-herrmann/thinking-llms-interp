@@ -29,7 +29,7 @@ print("Available clustering methods:", list(SUPPORTED_CLUSTERING_METHODS))
 MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 LAYER = 6
 N_EXAMPLES = 100000
-N_CLUSTERS = 20 # 29
+N_CLUSTERS = 5 # 29
 CLUSTERING_METHOD = "sae_topk"  # Choose from SUPPORTED_CLUSTERING_METHODS
 LOAD_IN_8BIT = False
 
@@ -237,6 +237,10 @@ completeness_results = evaluate_clustering_completeness(
     [str(label) for label in cluster_labels]
 )
 print(f"Completeness results: {completeness_results}")
+print(f"Total sentences evaluated: {completeness_results['total_sentences']}")
+print(f"Assigned sentences: {completeness_results['assigned']} ({completeness_results['assigned_fraction']:.2f})")
+print(f"Not assigned sentences: {completeness_results['not_assigned']} ({completeness_results['not_assigned_fraction']:.2f})")
+
 
 # %%
 # Display detailed completeness analysis
@@ -267,7 +271,6 @@ if "detailed_analysis" in completeness_results:
     print(f"\n🟢 CORRECT ASSIGNMENTS ({len(detailed_analysis['correct_assignments'])}): Assigned to correct category")
     enumeration_length = 100
     for i, item in enumerate(detailed_analysis['correct_assignments'][:enumeration_length]):
-        print(item)
         ground_truth_category_id = item['ground_truth_category']
         assigned_category_id = item['assigned_category'].split(" ")[1]
         print(f"  {i+1}. Ground truth: Category {item['ground_truth_category']} ({title_by_cluster[str(ground_truth_category_id)]}) | Assigned: {item['assigned_category']} ({title_by_cluster[str(assigned_category_id)]})")
