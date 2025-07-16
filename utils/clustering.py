@@ -576,7 +576,7 @@ Look for:
 
 Your response should be in this exact format:
 Title: [concise title naming the specific reasoning function]
-Description: [2-3 brief sentences explaining (1) what this function does, (2) what is INCLUDED and NOT INCLUDED in this category]
+Description: [a single sentence explaining what is the reasoning process that this cluster is about]
 
 Avoid overly general descriptions. Be precise enough that someone could reliably identify new examples of this reasoning function.
 """
@@ -671,7 +671,14 @@ def completeness_autograder(sentences, categories, model, ground_truth_labels=No
 
         prompt = f"""# Task: Categorize Sentences of Reasoning Traces
 
-You are an expert at categorizing the sentences of reasoning traces into predefined categories. Your task is to analyze each sentence and assign it to the most appropriate category based on the provided descriptions. If a sentence does not fit into any category, label it as "None".
+You are a highly selective expert at categorizing reasoning sentences. Your task is to STRICTLY evaluate whether each sentence fits into one of the predefined categories. You should be CONSERVATIVE and PRECISE - only assign a category if there is a clear, unambiguous match.
+
+**CRITICAL INSTRUCTIONS:**
+- BE STRICT: Only assign a category if the sentence is a clear, strong example of that category
+- PREFER "None": When in doubt, choose "None" rather than forcing an assignment
+- AVOID false positives: It is better to miss a borderline case than to incorrectly categorize
+- REQUIRE precise match: The sentence must clearly demonstrate the specific reasoning function described
+- NO loose interpretations: Don't stretch categories to accommodate sentences that don't clearly fit
 
 ## Categories:
 {categories_text}
@@ -679,10 +686,14 @@ You are an expert at categorizing the sentences of reasoning traces into predefi
 ## Sentences to Categorize:
 {sentences_text}
 
-## Instructions:
-1. For each sentence, carefully consider if it fits into one of the defined categories.
-2. Assign exactly ONE category to each sentence if applicable, or "None" if it doesn't fit any category.
-3. Provide your response in the exact format specified below.
+## Evaluation Criteria:
+1. Does the sentence CLEARLY and UNAMBIGUOUSLY demonstrate the exact reasoning function described?
+2. Would this sentence serve as a good TEACHING EXAMPLE of the category?
+3. Is there ANY doubt about whether it fits the category description?
+
+If you answer "no" to questions 1-2 or "yes" to question 3, assign "None".
+
+**Remember: False positives (incorrect assignments) are worse than false negatives (missed assignments). When uncertain, choose "None".**
 
 ## Response Format:
 Your response must follow this exact JSON format:
@@ -691,7 +702,7 @@ Your response must follow this exact JSON format:
   "categorizations": [
     {{
       "sentence_id": <sentence idx>,
-      "explanation": "Brief explanation of your reasoning",
+      "explanation": "Brief explanation of your reasoning and why you were certain/uncertain",
       "assigned_category": "Category <category idx>" (not the title, just the category index) or "None"
     }},
     ... (repeat for all sentences)

@@ -29,7 +29,7 @@ print("Available clustering methods:", list(SUPPORTED_CLUSTERING_METHODS))
 MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 LAYER = 6
 N_EXAMPLES = 100000
-N_CLUSTERS = 5 # 29
+N_CLUSTERS = 30 # 29
 CLUSTERING_METHOD = "sae_topk"  # Choose from SUPPORTED_CLUSTERING_METHODS
 LOAD_IN_8BIT = False
 
@@ -47,6 +47,8 @@ print(f"Clustering method: {CLUSTERING_METHOD}")
 # %%
 
 # Clustering evaluation config
+REPETITIONS = 5
+
 MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS = "o3"
 N_DESCRIPTION_EXAMPLES = 200
 
@@ -207,40 +209,47 @@ for cluster_idx in sorted(representative_examples.keys()):
             print(f"  {n_examples - n_bottom_examples_per_cluster + i + 1}. {example}")
 
 # %%
-# Generate category descriptions
-print("Generating category descriptions...")
-categories = generate_category_descriptions(
-    cluster_centers, 
-    MODEL_NAME, 
-    MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS, 
-    N_DESCRIPTION_EXAMPLES, 
-    representative_examples,
-    n_trace_examples=0,
-    n_categories_examples=5
-)
+completeness_scores = []
+for repetition in range(REPETITIONS):
+    # Generate category descriptions
+    print("Generating category descriptions...")
+    categories = generate_category_descriptions(
+        cluster_centers, 
+        MODEL_NAME, 
+        MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS, 
+        N_DESCRIPTION_EXAMPLES, 
+        representative_examples,
+        n_trace_examples=0,
+        n_categories_examples=5
+    )
 
-print("Generated category descriptions:")
-for cluster_id, title, description in categories:
-    print(f"\nCluster {cluster_id}:")
-    print(f"  Title: {title}")
-    print(f"  Description: {description}")
+    print("Generated category descriptions:")
+    for cluster_id, title, description in categories:
+        print(f"\nCluster {cluster_id}:")
+        print(f"  Title: {title}")
+        print(f"  Description: {description}")
 
-title_by_cluster = {cluster_id: title for cluster_id, title, description in categories}
+    title_by_cluster = {cluster_id: title for cluster_id, title, description in categories}
 
-# %%
-print("Running completeness evaluation...")
-completeness_results = evaluate_clustering_completeness(
-    all_texts,
-    categories,
-    MODEL_NAME_FOR_COMPLETENESS_EVALUATION,
-    N_COMPLETENESS_EXAMPLES,
-    [str(label) for label in cluster_labels]
-)
-print(f"Completeness results: {completeness_results}")
-print(f"Total sentences evaluated: {completeness_results['total_sentences']}")
-print(f"Assigned sentences: {completeness_results['assigned']} ({completeness_results['assigned_fraction']:.2f})")
-print(f"Not assigned sentences: {completeness_results['not_assigned']} ({completeness_results['not_assigned_fraction']:.2f})")
+    print("Running completeness evaluation...")
+    completeness_results = evaluate_clustering_completeness(
+        all_texts,
+        categories,
+        MODEL_NAME_FOR_COMPLETENESS_EVALUATION,
+        N_COMPLETENESS_EXAMPLES,
+        [str(label) for label in cluster_labels]
+    )
+    print(f"Completeness results: {completeness_results}")
+    print(f"Total sentences evaluated: {completeness_results['total_sentences']}")
+    print(f"Assigned sentences: {completeness_results['assigned']} ({completeness_results['assigned_fraction']:.2f})")
+    print(f"Not assigned sentences: {completeness_results['not_assigned']} ({completeness_results['not_assigned_fraction']:.2f})")
 
+    completeness_scores.append(completeness_results['assigned_fraction'])
+
+print("-"*100)
+print(f"Completeness scores: {completeness_scores}")
+print(f"Average completeness score: {np.mean(completeness_scores)}")
+print(f"Standard deviation of completeness scores: {np.std(completeness_scores)}")
 
 # %%
 # Display detailed completeness analysis
