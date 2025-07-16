@@ -795,6 +795,9 @@ Only include the JSON object in your response, with no additional text before or
         elif assigned_category != "None" and (confidence < 1 or confidence > 10):
             print(f"Warning: Sentence {sentence_idx} has invalid confidence {confidence}, clamping to valid range")
             confidence = max(1, min(10, confidence))
+
+        # Normalize confidence to 0-1
+        confidence = confidence / 10.0
         
         total_confidence += confidence
         
