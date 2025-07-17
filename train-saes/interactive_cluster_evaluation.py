@@ -15,7 +15,7 @@ from utils.clustering import (
     SUPPORTED_CLUSTERING_METHODS,
     load_trained_clustering_data, predict_clusters,
     generate_category_descriptions, evaluate_clustering_accuracy, compute_centroid_orthogonality,
-    generate_representative_examples, evaluate_clustering_completeness
+    generate_representative_examples, evaluate_clustering_completeness, compute_semantic_orthogonality
 )
 from utils import utils
 
@@ -29,7 +29,7 @@ print("Available clustering methods:", list(SUPPORTED_CLUSTERING_METHODS))
 MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 LAYER = 6
 N_EXAMPLES = 100000
-N_CLUSTERS = 30 # 29
+N_CLUSTERS = 5 # 29
 CLUSTERING_METHOD = "sae_topk"  # Choose from SUPPORTED_CLUSTERING_METHODS
 LOAD_IN_8BIT = False
 
@@ -57,6 +57,8 @@ N_COMPLETENESS_EXAMPLES = 500
 
 MODEL_NAME_FOR_ACCURACY_EVALUATION = "o3"
 N_ACCURACY_EXAMPLES = 100
+
+MODEL_NAME_FOR_SEMANTIC_ORTHOGONALITY = "gpt-4.1"
 
 # %%
 # Load model and process activations
@@ -209,49 +211,87 @@ for cluster_idx in sorted(representative_examples.keys()):
             print(f"  {n_examples - n_bottom_examples_per_cluster + i + 1}. {example}")
 
 # %%
-completeness_scores = []
-for repetition in range(REPETITIONS):
-    # Generate category descriptions
-    print("Generating category descriptions...")
-    categories = generate_category_descriptions(
-        cluster_centers, 
-        MODEL_NAME, 
-        MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS, 
-        N_DESCRIPTION_EXAMPLES, 
-        representative_examples,
-        n_trace_examples=0,
-        n_categories_examples=5
-    )
+# Generate category descriptions
+print("Generating category descriptions...")
+categories = generate_category_descriptions(
+    cluster_centers, 
+    MODEL_NAME, 
+    MODEL_NAME_FOR_CATEGORY_DESCRIPTIONS, 
+    N_DESCRIPTION_EXAMPLES, 
+    representative_examples,
+    n_trace_examples=0,
+    n_categories_examples=5
+)
 
-    print("Generated category descriptions:")
-    for cluster_id, title, description in categories:
-        print(f"\nCluster {cluster_id}:")
-        print(f"  Title: {title}")
-        print(f"  Description: {description}")
+print("Generated category descriptions:")
+for cluster_id, title, description in categories:
+    print(f"\nCluster {cluster_id}:")
+    print(f"  Title: {title}")
+    print(f"  Description: {description}")
 
-    title_by_cluster = {cluster_id: title for cluster_id, title, description in categories}
+title_by_cluster = {cluster_id: title for cluster_id, title, description in categories}
 
-    print("Running completeness evaluation...")
-    completeness_results = evaluate_clustering_completeness(
-        all_texts,
-        categories,
-        MODEL_NAME_FOR_COMPLETENESS_EVALUATION,
-        N_COMPLETENESS_EXAMPLES,
-        [str(label) for label in cluster_labels]
-    )
-    print(f"Completeness results: {completeness_results}")
-    print(f"Total sentences evaluated: {completeness_results['total_sentences']}")
-    print(f"Assigned sentences: {completeness_results['assigned']} ({completeness_results['assigned_fraction']:.2f})")
-    print(f"Not assigned sentences: {completeness_results['not_assigned']} ({completeness_results['not_assigned_fraction']:.2f})")
-    print(f"Average confidence: {completeness_results.get('avg_confidence', 0.0):.2f}")
-    print(f"Category average confidences: {completeness_results.get('category_avg_confidences', {})}")
+#%%
+print("Computing semantic orthogonality...")
+semantic_orthogonality_results = compute_semantic_orthogonality(categories, MODEL_NAME_FOR_SEMANTIC_ORTHOGONALITY)
+print(f"Semantic orthogonality: {semantic_orthogonality_results['avg_orthogonality']}")
+print(f"Semantic orthogonality score: {semantic_orthogonality_results['orthogonality_score']}")
 
-    completeness_scores.append(completeness_results['avg_confidence'])
+for i in range(len(cluster_centers)):
+    for j in range(i+1, len(cluster_centers)):
+        print(f"Cluster {i} and Cluster {j} similarity: {semantic_orthogonality_results['similarity_matrix'][i, j]} -> {semantic_orthogonality_results['explanations'][i, j]}")
 
-print("-"*100)
-print(f"Completeness scores: {completeness_scores}")
-print(f"Average completeness score: {np.mean(completeness_scores)}")
-print(f"Standard deviation of completeness scores: {np.std(completeness_scores)}")
+# %%
+
+# Show the cluster titles and descriptions of pairs of clusters with semantic orthogonality 0
+print(f"Pairs of clusters with semantic orthogonality below threshold: {semantic_orthogonality_results['orthogonality_threshold']}")
+for i in range(len(cluster_centers)):
+    for j in range(i+1, len(cluster_centers)):
+        if semantic_orthogonality_results['orthogonality_matrix'][i, j] < semantic_orthogonality_results['orthogonality_threshold']:
+            print(f"Cluster {i} and Cluster {j} semantic orthogonality: {semantic_orthogonality_results['orthogonality_matrix'][i, j]}")
+            print(f"- Explanation: {semantic_orthogonality_results['explanations'][i, j]}")
+            print(f"- Cluster {i}: {title_by_cluster[str(i)]}")
+            print(f"\tDescription: {categories[i][2]}")
+            print(f"- Cluster {j}: {title_by_cluster[str(j)]}")
+            print(f"\tDescription: {categories[j][2]}")
+            print("-"*100)
+
+# %%
+
+# Plot semantic orthogonality matrix
+plt.figure(figsize=(12, 10))
+im = plt.imshow(semantic_orthogonality_results['orthogonality_matrix'], cmap='viridis', interpolation='nearest')
+plt.colorbar(im, label='Orthogonality (1 - |cosine similarity|)')
+plt.title(f'Semantic Orthogonality Matrix - {CLUSTERING_METHOD} (Layer {LAYER})')
+plt.xlabel('Cluster ID')
+plt.ylabel('Cluster ID')
+plt.xticks(range(len(cluster_centers)))
+plt.yticks(range(len(cluster_centers)))
+
+# Add text annotations for values
+for i in range(len(cluster_centers)):
+    for j in range(len(cluster_centers)):
+        plt.text(j, i, f'{semantic_orthogonality_results["orthogonality_matrix"][i, j]:.2f}', 
+                ha='center', va='center', color='white' if semantic_orthogonality_results["orthogonality_matrix"][i, j] < 0.5 else 'black', fontsize=8)
+
+plt.tight_layout()
+plt.show()
+
+# %%
+print("Running completeness evaluation...")
+completeness_results = evaluate_clustering_completeness(
+    all_texts,
+    categories,
+    MODEL_NAME_FOR_COMPLETENESS_EVALUATION,
+    N_COMPLETENESS_EXAMPLES,
+    [str(label) for label in cluster_labels]
+)
+print(f"Completeness results: {completeness_results}")
+print(f"Total sentences evaluated: {completeness_results['total_sentences']}")
+print(f"Assigned sentences: {completeness_results['assigned']} ({completeness_results['assigned_fraction']:.2f})")
+print(f"Not assigned sentences: {completeness_results['not_assigned']} ({completeness_results['not_assigned_fraction']:.2f})")
+print(f"Average confidence: {completeness_results.get('avg_confidence', 0.0):.2f}")
+print(f"Category average confidences: {completeness_results.get('category_avg_confidences', {})}")
 
 # %%
 # Display detailed completeness analysis

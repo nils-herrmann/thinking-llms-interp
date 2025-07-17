@@ -1143,6 +1143,168 @@ def compute_centroid_orthogonality(cluster_centers):
     return avg_orthogonality
 
 
+def compute_semantic_orthogonality(categories, model="gpt-4.1", orthogonality_threshold=0.5):
+    """
+    Compute the semantic orthogonality of categories using LLM-based similarity evaluation.
+    
+    Parameters:
+    -----------
+    categories : list
+        List of tuples (cluster_id, title, description) for each category
+    model : str
+        Model to use for semantic similarity evaluation
+    orthogonality_threshold : float
+        Threshold for counting orthogonal pairs (default: 0.5)
+        
+    Returns:
+    --------
+    dict
+        Dictionary containing:
+        - avg_orthogonality: Average semantic orthogonality (1 - similarity) between categories
+        - similarity_matrix: Full similarity matrix
+        - orthogonality_matrix: Full orthogonality matrix
+        - explanations: Dictionary mapping (i, j) pairs to explanation strings
+        - orthogonality_score: Fraction of pairs in upper triangle with orthogonality below threshold
+        - orthogonality_threshold: The threshold used for computing orthogonality_score
+    """
+    start_time = time.time()
+    n_categories = len(categories)
+    
+    if n_categories <= 1:
+        return {
+            "avg_orthogonality": 0.0,
+            "similarity_matrix": np.array([[1.0]]) if n_categories == 1 else np.array([]),
+            "orthogonality_matrix": np.array([[0.0]]) if n_categories == 1 else np.array([]),
+            "explanations": {},
+            "orthogonality_score": 0,
+            "orthogonality_threshold": orthogonality_threshold
+        }
+    
+    # Initialize similarity matrix and explanations dictionary
+    similarity_matrix = np.zeros((n_categories, n_categories))
+    explanations = {}
+    
+    # Fill diagonal with 1.0 (perfect self-similarity)
+    np.fill_diagonal(similarity_matrix, 1.0)
+    
+    # Prepare batch prompts for all pairs in lower triangle
+    batch_prompts = []
+    batch_pairs = []
+    
+    for i in range(n_categories):
+        for j in range(i + 1, n_categories):  # Only lower triangle (i < j)
+            category1 = categories[i]
+            category2 = categories[j]
+            
+            cluster_id1, title1, description1 = category1
+            cluster_id2, title2, description2 = category2
+            
+            prompt = f"""# Task: Semantic Similarity Evaluation
+
+You are an expert at analyzing the semantic similarity between different reasoning functions. Your task is to evaluate how similar two categories of reasoning sentences are in terms of their underlying cognitive or functional purpose.
+
+## Category 1:
+Title: {title1}
+Description: {description1}
+
+## Category 2:
+Title: {title2}
+Description: {description2}
+
+## Instructions:
+Rate the semantic similarity between these two categories on a scale from 0 to 10, where:
+- 0 = Completely different reasoning functions
+- 5 = Somewhat related but distinct functions
+- 10 = Essentially the same reasoning function, just described differently
+
+Consider:
+1. The underlying cognitive process or reasoning operation
+2. The functional role within a reasoning trace
+3. Whether sentences from one category could reasonably belong to the other
+
+Focus on functional similarity rather than surface-level word overlap.
+
+## Response Format:
+Your response must follow this exact JSON format:
+```json
+{{
+  "explanation": "Brief explanation of your reasoning for this score",
+  "similarity_score": <integer from 0-10>
+}}
+```
+
+Only include the JSON object in your response, with no additional text before or after.
+"""
+            
+            batch_prompts.append(prompt)
+            batch_pairs.append((i, j))
+    
+    # Process all prompts in batch
+    print(f"Processing {len(batch_prompts)} semantic similarity prompts in batch...")
+    responses = run_chat_batch_with_event_loop_handling(batch_prompts, model)
+    
+    # Parse responses and fill similarity matrix
+    for idx, response in enumerate(responses):
+        i, j = batch_pairs[idx]
+        
+        try:
+            result = parse_json_response(response)
+            similarity_score = result.get('similarity_score', 0)
+            explanation = result.get('explanation', '')
+            
+            # Validate score is in range
+            if not isinstance(similarity_score, (int, float)) or similarity_score < 0 or similarity_score > 10:
+                print(f"Warning: Invalid similarity score {similarity_score}, clamping to valid range")
+                similarity_score = max(0, min(10, int(similarity_score)))
+            
+            # Normalize to 0-1
+            normalized_score = similarity_score / 10.0
+            
+            # Fill both positions in the matrix (symmetric)
+            similarity_matrix[i, j] = normalized_score
+            similarity_matrix[j, i] = normalized_score
+            
+            # Store explanations for both pairs (symmetric)
+            explanations[(i, j)] = explanation
+            explanations[(j, i)] = explanation
+            
+        except Exception as e:
+            print(f"Error parsing semantic similarity response for pair ({i}, {j}): {e}")
+            print(f"Raw response: {response}")
+            # Default to 0 similarity on error
+            similarity_matrix[i, j] = 0.0
+            similarity_matrix[j, i] = 0.0
+            # Default explanation on error
+            explanations[(i, j)] = "Error parsing response"
+            explanations[(j, i)] = "Error parsing response"
+    
+    # Calculate orthogonality as 1 - similarity
+    orthogonality_matrix = 1 - similarity_matrix
+    
+    # Get the indices of the upper triangular part (excluding diagonal)
+    indices = np.triu_indices(orthogonality_matrix.shape[0], k=1)
+    
+    # Extract the upper triangular values
+    upper_tri_values = orthogonality_matrix[indices]
+    
+    # Calculate average orthogonality
+    avg_orthogonality = np.mean(upper_tri_values) if len(upper_tri_values) > 0 else 0.0
+    
+    # Calculate orthogonality score (fraction of pairs below threshold)
+    orthogonality_score = np.sum(upper_tri_values < orthogonality_threshold) / len(upper_tri_values) if len(upper_tri_values) > 0 else 0
+    
+    print_and_flush(f"Computed semantic orthogonality in {time.time() - start_time} seconds")
+    
+    return {
+        "avg_orthogonality": avg_orthogonality,
+        "similarity_matrix": similarity_matrix,
+        "orthogonality_matrix": orthogonality_matrix,
+        "explanations": explanations,
+        "orthogonality_score": orthogonality_score,
+        "orthogonality_threshold": orthogonality_threshold
+    }
+
+
 def generate_representative_examples(cluster_centers, texts, cluster_labels, example_activations):
     """
     Generate representative examples for each cluster based on distance to centroid.
@@ -1407,13 +1569,22 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     # Compute centroid orthogonality
     orthogonality = compute_centroid_orthogonality(cluster_centers)
     
+    # Compute semantic orthogonality
+    semantic_orthogonality_results = compute_semantic_orthogonality(categories, "gpt-4.1")
+    
     # Get average accuracy from accuracy_results["avg"]
     avg_accuracy = accuracy_results.get("avg", {}).get("accuracy", 0)
     
     results = {
         "accuracy": avg_accuracy,
         "categories": categories,
-        "orthogonality": orthogonality  # Add orthogonality to results
+        "orthogonality": orthogonality,  # Add orthogonality to results
+        "semantic_orthogonality": semantic_orthogonality_results["avg_orthogonality"],
+        "semantic_similarity_matrix": semantic_orthogonality_results["similarity_matrix"],
+        "semantic_orthogonality_matrix": semantic_orthogonality_results["orthogonality_matrix"],
+        "semantic_explanations": semantic_orthogonality_results["explanations"],
+        "semantic_orthogonality_score": semantic_orthogonality_results["orthogonality_score"],
+        "semantic_orthogonality_threshold": semantic_orthogonality_results["orthogonality_threshold"]
     }
     
     # Optionally run completeness autograder
