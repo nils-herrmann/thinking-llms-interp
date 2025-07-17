@@ -234,8 +234,8 @@ title_by_cluster = {cluster_id: title for cluster_id, title, description in cate
 #%%
 print("Computing semantic orthogonality...")
 semantic_orthogonality_results = compute_semantic_orthogonality(categories, MODEL_NAME_FOR_SEMANTIC_ORTHOGONALITY)
-print(f"Semantic orthogonality: {semantic_orthogonality_results['avg_orthogonality']}")
-print(f"Semantic orthogonality score: {semantic_orthogonality_results['orthogonality_score']}")
+print(f"Average semantic orthogonality: {semantic_orthogonality_results['avg_semantic_orthogonality']}")
+print(f"Semantic orthogonality: {semantic_orthogonality_results['semantic_orthogonality']}")
 
 for i in range(len(cluster_centers)):
     for j in range(i+1, len(cluster_centers)):

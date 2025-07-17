@@ -61,6 +61,7 @@ def visualize_results(results_json_path):
     f1_scores = results['f1_scores']
     confidence_scores = results['confidence_scores']
     orthogonality_scores = results['orthogonality_scores']
+    semantic_orthogonality_scores = results.get('semantic_orthogonality_scores', orthogonality_scores)
     model_id = results['model_id']
     layer = results['layer']
     method = results['clustering_method']
@@ -74,6 +75,7 @@ def visualize_results(results_json_path):
     f1_scores = [f1_scores[i] for i in indices_to_keep]
     confidence_scores = [confidence_scores[i] for i in indices_to_keep]
     orthogonality_scores = [orthogonality_scores[i] for i in indices_to_keep]
+    semantic_orthogonality_scores = [semantic_orthogonality_scores[i] for i in indices_to_keep]
     # optimal_n_clusters = cluster_range_to_keep[indices_to_keep.index(optimal_n_clusters)]
 
     
@@ -83,9 +85,9 @@ def visualize_results(results_json_path):
     # Define x-coordinates for vertical lines
     vertical_lines_x = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
     
-    # Calculate final score (cluster score from analyze-clusters.py)
-    final_scores = [(f1 + confidence + orthogonality) / 3 
-                   for f1, confidence, orthogonality in zip(f1_scores, confidence_scores, orthogonality_scores)]
+    # Calculate final score (cluster score from analyze-clusters.py) using semantic orthogonality
+    final_scores = [(f1 + confidence + semantic_orthogonality) / 3 
+                   for f1, confidence, semantic_orthogonality in zip(f1_scores, confidence_scores, semantic_orthogonality_scores)]
     
     # Final Score (combined metric) - Top Left
     axs[0, 0].plot(cluster_range, final_scores, 'o-', color='blue')
@@ -132,8 +134,14 @@ def visualize_results(results_json_path):
     for x in vertical_lines_x:
         axs[2, 0].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
-    # Hide the empty subplot in the bottom-right
-    axs[2, 1].axis('off')
+    # Semantic Orthogonality - Bottom Right
+    axs[2, 1].plot(cluster_range, semantic_orthogonality_scores, 'o-', color='brown')
+    axs[2, 1].set_xlabel('Number of Clusters')
+    axs[2, 1].set_ylabel('Semantic Orthogonality')
+    axs[2, 1].set_title('Semantic Orthogonality vs. Number of Clusters')
+    # axs[2, 1].axvline(x=optimal_n_clusters, color='gray', linestyle='--')
+    for x in vertical_lines_x:
+        axs[2, 1].axvline(x=x, color='red', linestyle='--', alpha=0.15)
     
     # Add overall title
     method_name = method.capitalize()

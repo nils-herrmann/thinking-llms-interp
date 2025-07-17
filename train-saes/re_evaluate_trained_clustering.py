@@ -116,6 +116,7 @@ def re_evaluate_clustering_method_with_n_clusters(model_id, layer, n_clusters, m
         'f1': avg_f1,
         'assignment_rate': scoring_results['assigned_fraction'],
         'orthogonality': scoring_results['orthogonality'],
+        'semantic_orthogonality': scoring_results['semantic_orthogonality'],
         'detailed_results': scoring_results,
         'n_clusters': n_clusters,
         'method': method
@@ -158,6 +159,7 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
     f1_scores = []
     assignment_rates = []
     orthogonality_scores = []
+    semantic_orthogonality_scores = []
     detailed_results_dict = {}
 
     print_and_flush(f"Testing {len(cluster_range)} different cluster counts...")
@@ -170,6 +172,7 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         f1_scores.append(results['f1'])
         assignment_rates.append(results['assignment_rate'])
         orthogonality_scores.append(results['orthogonality'])
+        semantic_orthogonality_scores.append(results['semantic_orthogonality'])
         detailed_results_dict[n_clusters] = results['detailed_results']
     
     # Load existing JSON file and update it
@@ -185,9 +188,9 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         detailed_result = detailed_results_dict[n_clusters]
         confidence_scores.append(detailed_result.get('avg_confidence', 0.0))
     
-    # Calculate final scores (average of F1, confidence, and orthogonality)
-    final_scores = [(f1 + conf + orth) / 3 for f1, conf, orth in 
-                   zip(f1_scores, confidence_scores, orthogonality_scores)]
+    # Calculate final scores (average of F1, confidence, and semantic orthogonality)
+    final_scores = [(f1 + conf + sem_orth) / 3 for f1, conf, sem_orth in 
+                   zip(f1_scores, confidence_scores, semantic_orthogonality_scores)]
 
     # Find optimal number of clusters based on final score (same as ablate_clustering.py)
     optimal_n_clusters = cluster_range[np.argmax(final_scores)]
@@ -202,6 +205,7 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         'assignment_rates': assignment_rates,
         'confidence_scores': confidence_scores,
         'orthogonality_scores': orthogonality_scores,
+        'semantic_orthogonality_scores': semantic_orthogonality_scores,
         'final_scores': final_scores,
         'optimal_n_clusters': optimal_n_clusters,
         'optimal_accuracy': accuracy_scores[optimal_idx],
@@ -211,6 +215,7 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         'optimal_assignment_rate': assignment_rates[optimal_idx],
         'optimal_confidence': confidence_scores[optimal_idx],
         'optimal_orthogonality': orthogonality_scores[optimal_idx],
+        'optimal_semantic_orthogonality': semantic_orthogonality_scores[optimal_idx],
         'optimal_final_score': final_scores[optimal_idx],
         'detailed_results': detailed_results_dict
     })
@@ -250,20 +255,22 @@ def print_evaluation_summary(results, method):
     print_and_flush(f"Optimal assignment rate: {results['optimal_assignment_rate']:.4f}")
     print_and_flush(f"Optimal confidence: {results.get('optimal_confidence', 0.0):.4f}")
     print_and_flush(f"Optimal orthogonality: {results['optimal_orthogonality']:.4f}")
+    print_and_flush(f"Optimal semantic orthogonality: {results['optimal_semantic_orthogonality']:.4f}")
     
     print_and_flush("\nMetrics for all cluster sizes:")
-    print_and_flush(f"{'Clusters':<10} {'Final':<8} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Confid':<8} {'Orthog':<8}")
-    print_and_flush(f"{'-'*10} {'-'*8} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    print_and_flush(f"{'Clusters':<10} {'Final':<8} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Confid':<8} {'Orthog':<8} {'SemOrth':<8}")
+    print_and_flush(f"{'-'*10} {'-'*8} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
     
     cluster_range = results['cluster_range']
-    confidence_scores = results.get('confidence_scores', [0.0] * len(cluster_range))
-    final_scores = results.get('final_scores', [0.0] * len(cluster_range))
+    confidence_scores = results['confidence_scores']
+    final_scores = results['final_scores']
+    semantic_orthogonality_scores = results['semantic_orthogonality_scores']
     for i, n_clusters in enumerate(cluster_range):
         prefix = "* " if n_clusters == results['optimal_n_clusters'] else "  "
         print_and_flush(f"{prefix}{n_clusters:<8} "
                 f"{final_scores[i]:<8.4f} {results['accuracy_scores'][i]:<10.4f} {results['precision_scores'][i]:<11.4f} "
                 f"{results['recall_scores'][i]:<8.4f} {results['f1_scores'][i]:<8.4f} "
-                f"{results['assignment_rates'][i]:<8.4f} {confidence_scores[i]:<8.4f} {results['orthogonality_scores'][i]:<8.4f}")
+                f"{results['assignment_rates'][i]:<8.4f} {confidence_scores[i]:<8.4f} {results['orthogonality_scores'][i]:<8.4f} {semantic_orthogonality_scores[i]:<8.4f}")
 
 # %% Load model and process activations
 print_and_flush("Loading model and processing activations...")
@@ -308,14 +315,14 @@ if len(all_results) > 1:
     print_and_flush("\n" + "="*50)
     print_and_flush("OVERALL COMPARISON")
     print_and_flush("="*50)
-    print_and_flush(f"{'Method':<20} {'Optimal K':<10} {'Final':<8} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Confid':<8} {'Orthog':<8}")
-    print_and_flush(f"{'-'*20} {'-'*10} {'-'*8} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
+    print_and_flush(f"{'Method':<20} {'Optimal K':<10} {'Final':<8} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Assign%':<8} {'Confid':<8} {'Orthog':<8} {'SemOrth':<8}")
+    print_and_flush(f"{'-'*20} {'-'*10} {'-'*8} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
     
     for method, results in all_results.items():
         print_and_flush(f"{method.capitalize():<20} {results['optimal_n_clusters']:<10} "
               f"{results.get('optimal_final_score', 0.0):<8.4f} {results['optimal_accuracy']:<10.4f} "
               f"{results['optimal_precision']:<11.4f} {results['optimal_recall']:<8.4f} "
               f"{results['optimal_f1']:<8.4f} {results['optimal_assignment_rate']:<8.4f} "
-              f"{results.get('optimal_confidence', 0.0):<8.4f} {results['optimal_orthogonality']:<8.4f}")
+              f"{results.get('optimal_confidence', 0.0):<8.4f} {results['optimal_orthogonality']:<8.4f} {results.get('optimal_semantic_orthogonality', 0.0):<8.4f}")
 
 print_and_flush("\nEvaluation complete!") 

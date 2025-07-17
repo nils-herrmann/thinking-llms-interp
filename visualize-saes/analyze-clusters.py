@@ -26,11 +26,13 @@ for layer in layers:
         cluster_data = clusters_detailed_results[str(n_clusters)] # dict_keys(['accuracy', 'categories', 'orthogonality', 'assigned_fraction', 'avg_confidence', 'category_counts', 'detailed_results'])
         accuracy = cluster_data['accuracy']
         orthogonality = cluster_data['orthogonality']
+        semantic_orthogonality = cluster_data.get('semantic_orthogonality', orthogonality)
         completeness = cluster_data['avg_confidence']
         
         print(f"Accuracy: {accuracy}")
         # print(f"Categories: {cluster_data['categories']}")
         print(f"Orthogonality: {orthogonality}")
+        print(f"Semantic Orthogonality: {semantic_orthogonality}")
         print(f"Completeness: {completeness}")
         # print(f"Category Counts: {cluster_data['category_counts']}")
         
@@ -51,7 +53,7 @@ for layer in layers:
         avg_f1_by_layer_n_clusters[(layer, n_clusters)] = avg_f1
         print(f"Average F1: {avg_f1}")
 
-        cluster_score = (avg_f1 + completeness + orthogonality) / 3
+        cluster_score = (avg_f1 + completeness + semantic_orthogonality) / 3
         print(f"Cluster Score: {cluster_score}")
 
         final_scores_by_layer_n_clusters[(layer, n_clusters)] = cluster_score

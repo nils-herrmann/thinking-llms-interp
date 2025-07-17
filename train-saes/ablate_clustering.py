@@ -129,6 +129,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     # Re-calculate all scores from the merged detailed results
     final_accuracy_scores = [merged_detailed_results[str(n)]['accuracy'] for n in final_cluster_range]
     final_orthogonality_scores = [merged_detailed_results[str(n)]['orthogonality'] for n in final_cluster_range]
+    final_semantic_orthogonality_scores = [merged_detailed_results[str(n)]['semantic_orthogonality'] for n in final_cluster_range]
     final_assignment_rates = [merged_detailed_results[str(n)].get('assigned_fraction', 0) for n in final_cluster_range]
     final_confidence_scores = [merged_detailed_results[str(n)].get('avg_confidence', 0.0) for n in final_cluster_range]
 
@@ -155,9 +156,9 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         final_precision_scores.append(avg_precision)
         final_recall_scores.append(avg_recall)
 
-    # Calculate final scores (average of F1, confidence, and orthogonality)
-    final_scores = [(f1 + conf + orth) / 3 for f1, conf, orth in 
-                   zip(final_f1_scores, final_confidence_scores, final_orthogonality_scores)]
+    # Calculate final scores (average of F1, confidence, and semantic orthogonality)
+    final_scores = [(f1 + conf + sem_orth) / 3 for f1, conf, sem_orth in 
+                   zip(final_f1_scores, final_confidence_scores, final_semantic_orthogonality_scores)]
 
     # Re-identify optimal number of clusters based on final score
     optimal_n_clusters = final_cluster_range[np.argmax(final_scores)]
@@ -176,6 +177,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         "assignment_rates": final_assignment_rates,
         "confidence_scores": final_confidence_scores,
         "orthogonality_scores": final_orthogonality_scores,
+        "semantic_orthogonality_scores": final_semantic_orthogonality_scores,
         "final_scores": final_scores,
         "optimal_n_clusters": optimal_n_clusters,
         "optimal_accuracy": final_accuracy_scores[optimal_idx],
@@ -185,6 +187,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
         "optimal_assignment_rate": final_assignment_rates[optimal_idx],
         "optimal_confidence": final_confidence_scores[optimal_idx],
         "optimal_orthogonality": final_orthogonality_scores[optimal_idx],
+        "optimal_semantic_orthogonality": final_semantic_orthogonality_scores[optimal_idx],
         "optimal_final_score": final_scores[optimal_idx],
         "detailed_results": merged_detailed_results
     }

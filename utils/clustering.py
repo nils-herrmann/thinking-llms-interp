@@ -1579,11 +1579,11 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         "accuracy": avg_accuracy,
         "categories": categories,
         "orthogonality": orthogonality,  # Add orthogonality to results
-        "semantic_orthogonality": semantic_orthogonality_results["avg_orthogonality"],
+        "avg_semantic_orthogonality": semantic_orthogonality_results["avg_orthogonality"],
         "semantic_similarity_matrix": semantic_orthogonality_results["similarity_matrix"],
         "semantic_orthogonality_matrix": semantic_orthogonality_results["orthogonality_matrix"],
         "semantic_explanations": semantic_orthogonality_results["explanations"],
-        "semantic_orthogonality_score": semantic_orthogonality_results["orthogonality_score"],
+        "semantic_orthogonality": semantic_orthogonality_results["orthogonality_score"],
         "semantic_orthogonality_threshold": semantic_orthogonality_results["orthogonality_threshold"]
     }
     
