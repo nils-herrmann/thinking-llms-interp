@@ -22,10 +22,8 @@ parser.add_argument("--layer", type=int, default=12,
                     help="Layer to analyze")
 parser.add_argument("--n_examples", type=int, default=500,
                     help="Number of examples to analyze")
-parser.add_argument("--min_clusters", type=int, default=4,
-                    help="Minimum number of clusters")
-parser.add_argument("--max_clusters", type=int, default=20,
-                    help="Maximum number of clusters")
+parser.add_argument("--clusters", type=str, default="5,10,15,20,25,30,35,40,45,50",
+                    help="Comma-separated list of cluster sizes to test")
 parser.add_argument("--load_in_8bit", action="store_true", default=False,
                     help="Load model in 8-bit mode")
 parser.add_argument("--n_autograder_examples", type=int, default=100,
@@ -90,7 +88,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     existing_detailed_results = existing_results_data.get("detailed_results", {})
     
     # Define cluster range to test
-    cluster_range = [10, 20, 30, 40, 50]
+    cluster_range = [int(c) for c in args.clusters.split(',')]
     
     print_and_flush(f"Testing {len(cluster_range)} different cluster counts...")
     
