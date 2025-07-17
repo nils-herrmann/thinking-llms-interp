@@ -932,7 +932,7 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_aut
     batch_metadata = []
     
     # For each category, prepare data and prompts
-    for cluster_id, title, description in tqdm(categories, desc="Preparing batch prompts"):
+    for cluster_id, title, description in categories:
         cluster_id_str = str(cluster_id)
         
         # Find all examples in this cluster and not in this cluster
