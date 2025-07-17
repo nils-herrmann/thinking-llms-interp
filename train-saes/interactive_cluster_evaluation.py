@@ -29,7 +29,7 @@ print("Available clustering methods:", list(SUPPORTED_CLUSTERING_METHODS))
 MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 LAYER = 6
 N_EXAMPLES = 100000
-N_CLUSTERS = 5 # 29
+N_CLUSTERS = 30 # 29
 CLUSTERING_METHOD = "sae_topk"  # Choose from SUPPORTED_CLUSTERING_METHODS
 LOAD_IN_8BIT = False
 
@@ -234,21 +234,21 @@ title_by_cluster = {cluster_id: title for cluster_id, title, description in cate
 #%%
 print("Computing semantic orthogonality...")
 semantic_orthogonality_results = compute_semantic_orthogonality(categories, MODEL_NAME_FOR_SEMANTIC_ORTHOGONALITY)
-print(f"Semantic orthogonality: {semantic_orthogonality_results['semantic_orthogonality']}")
+print(f"Semantic orthogonality: {semantic_orthogonality_results['semantic_orthogonality_score']}")
 
 for i in range(len(cluster_centers)):
     for j in range(i+1, len(cluster_centers)):
-        print(f"Cluster {i} and Cluster {j} similarity: {semantic_orthogonality_results['similarity_matrix'][i, j]} -> {semantic_orthogonality_results['explanations'][i, j]}")
+        print(f"Cluster {i} and Cluster {j} orthogonality: {semantic_orthogonality_results['semantic_orthogonality_matrix'][i, j]} -> {semantic_orthogonality_results['semantic_orthogonality_explanations'][i, j]}")
 
 # %%
 
 # Show the cluster titles and descriptions of pairs of clusters with semantic orthogonality 0
-print(f"Pairs of clusters with semantic orthogonality below threshold: {semantic_orthogonality_results['orthogonality_threshold']}")
+print(f"Pairs of clusters with semantic orthogonality below threshold: {semantic_orthogonality_results['semantic_orthogonality_threshold']}")
 for i in range(len(cluster_centers)):
     for j in range(i+1, len(cluster_centers)):
-        if semantic_orthogonality_results['orthogonality_matrix'][i, j] < semantic_orthogonality_results['orthogonality_threshold']:
-            print(f"Cluster {i} and Cluster {j} semantic orthogonality: {semantic_orthogonality_results['orthogonality_matrix'][i, j]}")
-            print(f"- Explanation: {semantic_orthogonality_results['explanations'][i, j]}")
+        if semantic_orthogonality_results['semantic_orthogonality_matrix'][i, j] < semantic_orthogonality_results['semantic_orthogonality_threshold']:
+            print(f"Cluster {i} and Cluster {j} semantic orthogonality: {semantic_orthogonality_results['semantic_orthogonality_matrix'][i, j]}")
+            print(f"- Explanation: {semantic_orthogonality_results['semantic_orthogonality_explanations'][i, j]}")
             print(f"- Cluster {i}: {title_by_cluster[str(i)]}")
             print(f"\tDescription: {categories[i][2]}")
             print(f"- Cluster {j}: {title_by_cluster[str(j)]}")
@@ -259,7 +259,7 @@ for i in range(len(cluster_centers)):
 
 # Plot semantic orthogonality matrix
 plt.figure(figsize=(12, 10))
-im = plt.imshow(semantic_orthogonality_results['orthogonality_matrix'], cmap='viridis', interpolation='nearest')
+im = plt.imshow(semantic_orthogonality_results['semantic_orthogonality_matrix'], cmap='viridis', interpolation='nearest')
 plt.colorbar(im, label='Orthogonality (1 - |cosine similarity|)')
 plt.title(f'Semantic Orthogonality Matrix - {CLUSTERING_METHOD} (Layer {LAYER})')
 plt.xlabel('Cluster ID')
@@ -270,8 +270,8 @@ plt.yticks(range(len(cluster_centers)))
 # Add text annotations for values
 for i in range(len(cluster_centers)):
     for j in range(len(cluster_centers)):
-        plt.text(j, i, f'{semantic_orthogonality_results["orthogonality_matrix"][i, j]:.2f}', 
-                ha='center', va='center', color='white' if semantic_orthogonality_results["orthogonality_matrix"][i, j] < 0.5 else 'black', fontsize=8)
+        plt.text(j, i, f'{semantic_orthogonality_results["semantic_orthogonality_matrix"][i, j]:.2f}', 
+                ha='center', va='center', color='white' if semantic_orthogonality_results["semantic_orthogonality_matrix"][i, j] < 0.5 else 'black', fontsize=8)
 
 plt.tight_layout()
 plt.show()

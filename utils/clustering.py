@@ -1290,10 +1290,10 @@ Only include the JSON object in your response, with no additional text before or
     print_and_flush(f"Computed semantic orthogonality in {time.time() - start_time} seconds")
     
     return {
-        "orthogonality_matrix": orthogonality_matrix,
-        "explanations": explanations,
-        "orthogonality_score": orthogonality_score,
-        "orthogonality_threshold": orthogonality_threshold
+        "semantic_orthogonality_matrix": orthogonality_matrix,
+        "semantic_orthogonality_explanations": explanations,
+        "semantic_orthogonality_score": orthogonality_score,
+        "semantic_orthogonality_threshold": orthogonality_threshold
     }
 
 
@@ -1573,10 +1573,10 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         
         # Compute semantic orthogonality
         semantic_orthogonality_results = compute_semantic_orthogonality(categories, "gpt-4.1", 0.5)
-        rep_results["semantic_orthogonality_matrix"] = semantic_orthogonality_results["orthogonality_matrix"]
-        rep_results["semantic_explanations"] = semantic_orthogonality_results["explanations"]
-        rep_results["semantic_orthogonality_score"] = semantic_orthogonality_results["orthogonality_score"]
-        rep_results["semantic_orthogonality_threshold"] = semantic_orthogonality_results["orthogonality_threshold"]
+        rep_results["semantic_orthogonality_matrix"] = semantic_orthogonality_results["semantic_orthogonality_matrix"]
+        rep_results["semantic_orthogonality_explanations"] = semantic_orthogonality_results["semantic_orthogonality_explanations"]
+        rep_results["semantic_orthogonality_score"] = semantic_orthogonality_results["semantic_orthogonality_score"]
+        rep_results["semantic_orthogonality_threshold"] = semantic_orthogonality_results["semantic_orthogonality_threshold"]
         
         # Run completeness autograder
         str_cluster_labels = [str(label) for label in cluster_labels]
