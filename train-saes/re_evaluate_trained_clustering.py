@@ -172,7 +172,7 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         f1_scores.append(results['f1'])
         assignment_rates.append(results['assignment_rate'])
         orthogonality_scores.append(results['orthogonality'])
-        semantic_orthogonality_scores.append(results['semantic_orthogonality'])
+        semantic_orthogonality_scores.append(results['semantic_similarity'])
         detailed_results_dict[n_clusters] = results['detailed_results']
     
     # Load existing JSON file and update it

@@ -129,7 +129,7 @@ def run_clustering_experiment(clustering_method, clustering_func, all_texts, act
     # Re-calculate all scores from the merged detailed results
     final_accuracy_scores = [merged_detailed_results[str(n)]['accuracy'] for n in final_cluster_range]
     final_orthogonality_scores = [merged_detailed_results[str(n)]['orthogonality'] for n in final_cluster_range]
-    final_semantic_orthogonality_scores = [merged_detailed_results[str(n)]['semantic_orthogonality'] for n in final_cluster_range]
+    final_semantic_orthogonality_scores = [merged_detailed_results[str(n)]['semantic_similarity'] for n in final_cluster_range]
     final_assignment_rates = [merged_detailed_results[str(n)].get('assigned_fraction', 0) for n in final_cluster_range]
     final_confidence_scores = [merged_detailed_results[str(n)].get('avg_confidence', 0.0) for n in final_cluster_range]
 

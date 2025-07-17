@@ -61,7 +61,7 @@ def visualize_results(results_json_path):
     f1_scores = results['f1_scores']
     confidence_scores = results['confidence_scores']
     orthogonality_scores = results['orthogonality_scores']
-    semantic_orthogonality_scores = results.get('semantic_orthogonality_scores', orthogonality_scores)
+    semantic_orthogonality_scores = results['semantic_orthogonality_scores']
     model_id = results['model_id']
     layer = results['layer']
     method = results['clustering_method']

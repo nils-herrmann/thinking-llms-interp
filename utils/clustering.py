@@ -1176,7 +1176,8 @@ def compute_semantic_orthogonality(categories, model="gpt-4.1", orthogonality_th
             "similarity_matrix": np.array([[1.0]]) if n_categories == 1 else np.array([]),
             "orthogonality_matrix": np.array([[0.0]]) if n_categories == 1 else np.array([]),
             "explanations": {},
-            "orthogonality_score": 0,
+            "orthogonality_score": 0.0,
+            "similarity_score": 1.0,
             "orthogonality_threshold": orthogonality_threshold
         }
     
@@ -1289,9 +1290,11 @@ Only include the JSON object in your response, with no additional text before or
     
     # Calculate average orthogonality
     avg_orthogonality = np.mean(upper_tri_values) if len(upper_tri_values) > 0 else 0.0
+    avg_similarity = np.mean(similarity_matrix[indices]) if len(similarity_matrix[indices]) > 0 else 0.0
     
     # Calculate orthogonality score (fraction of pairs below threshold)
     orthogonality_score = np.sum(upper_tri_values < orthogonality_threshold) / len(upper_tri_values) if len(upper_tri_values) > 0 else 0
+    similarity_score = np.sum(similarity_matrix[indices] > orthogonality_threshold) / len(similarity_matrix[indices]) if len(similarity_matrix[indices]) > 0 else 0
     
     print_and_flush(f"Computed semantic orthogonality in {time.time() - start_time} seconds")
     
@@ -1301,6 +1304,7 @@ Only include the JSON object in your response, with no additional text before or
         "orthogonality_matrix": orthogonality_matrix,
         "explanations": explanations,
         "orthogonality_score": orthogonality_score,
+        "similarity_score": similarity_score,
         "orthogonality_threshold": orthogonality_threshold
     }
 
@@ -1580,10 +1584,12 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         "categories": categories,
         "orthogonality": orthogonality,  # Add orthogonality to results
         "avg_semantic_orthogonality": semantic_orthogonality_results["avg_orthogonality"],
+        "avg_semantic_similarity": semantic_orthogonality_results["avg_similarity"],
         "semantic_similarity_matrix": semantic_orthogonality_results["similarity_matrix"],
         "semantic_orthogonality_matrix": semantic_orthogonality_results["orthogonality_matrix"],
         "semantic_explanations": semantic_orthogonality_results["explanations"],
         "semantic_orthogonality": semantic_orthogonality_results["orthogonality_score"],
+        "semantic_similarity": semantic_orthogonality_results["similarity_score"],
         "semantic_orthogonality_threshold": semantic_orthogonality_results["orthogonality_threshold"]
     }
     
