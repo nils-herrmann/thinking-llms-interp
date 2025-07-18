@@ -12,8 +12,8 @@ import pickle
 import time
 import random
 from tqdm import tqdm
-from utils.utils import print_and_flush, chat, chat_batch, convert_numpy_types
-
+from utils.utils import print_and_flush, chat_batch, convert_numpy_types, NumpyEncoder
+from scipy import stats
 
 categories_examples = [
     {
@@ -1617,11 +1617,130 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         all_results.append(rep_results)
 
     avg_final_score = np.mean([result['final_score'] for result in all_results])
+
+    # Compute statistics across all repetitions
+    statistics = {}
+    metrics_to_stat = [
+        'avg_accuracy', 'avg_f1', 'avg_precision', 'avg_recall', 'orthogonality',
+        'semantic_orthogonality_score', 'assigned_fraction', 'avg_confidence', 'final_score'
+    ]
+
+    for metric in metrics_to_stat:
+        values = [res[metric] for res in all_results if metric in res]
+        if not values:
+            continue
+
+        mean = np.mean(values)
+        
+        n = len(values)
+        if n > 1:
+            sem = stats.sem(values)
+            # 95% confidence interval using the t-distribution, which is more accurate for small sample sizes.
+            conf = 0.95
+            t_score = stats.t.ppf((1+conf)/2, df=n - 1)
+            ci_95 = (mean - t_score * sem, mean + t_score * sem)
+        else:
+            std_dev = 0
+            sem = 0
+            ci_95 = (mean, mean)
+        
+        statistics[metric] = {
+            'mean': mean,
+            'std_dev': std_dev,
+            'sem': sem,
+            'ci_95': ci_95
+        }
     
     return {
         "all_results": all_results,
-        "avg_final_score": avg_final_score
+        "avg_final_score": avg_final_score,
+        "statistics": statistics
     }
+
+def save_clustering_results(model_id, layer, clustering_method, eval_results_by_cluster_size):
+    """
+    Save clustering results to a JSON file.
+
+    Parameters:
+    -----------
+    model_id : str
+        Model ID
+    layer : int
+        Layer
+    clustering_method : str
+        Clustering method
+    eval_results_by_cluster_size : dict
+        Evaluation results by cluster size
+
+    Returns:
+    --------
+    dict
+        Clustering results for the given model, layer, and clustering method
+    """
+    # Define results path and load existing data
+    results_json_path = (
+        f"results/vars/{clustering_method}_results_{model_id}_layer{layer}.json"
+    )
+    results_data = {}
+    if os.path.exists(results_json_path):
+        try:
+            with open(results_json_path, "r") as f:
+                results_data = json.load(f)
+            print_and_flush(f"Loaded existing results from {results_json_path}")
+        except json.JSONDecodeError:
+            print_and_flush(
+                f"Warning: Could not decode JSON from {results_json_path}. Starting fresh."
+            )
+
+    results_data.update({
+        "clustering_method": clustering_method,
+        "model_id": model_id,
+        "layer": layer,
+    })
+
+    if "results_by_cluster_size" not in results_data:
+        results_data["results_by_cluster_size"] = {}
+
+    for n_clusters, eval_results in eval_results_by_cluster_size.items():
+        results_data["results_by_cluster_size"][str(n_clusters)] = eval_results
+
+    # Find the best cluster size
+    best_avg_final_score = 0
+    best_cluster_size = None
+    best_cluster_eval_results = None
+    for n_clusters, eval_results in results_data["results_by_cluster_size"].items():
+        if eval_results["avg_final_score"] > best_avg_final_score:
+            best_avg_final_score = eval_results["avg_final_score"]
+            best_cluster_size = n_clusters
+            best_cluster_eval_results = eval_results
+
+    assert best_cluster_eval_results is not None, "No best cluster eval results found"
+
+    if "best_cluster" not in results_data:
+        results_data["best_cluster"] = {}
+
+    # Save metrics for best cluster size
+    results_data["best_cluster"].update({
+        "size": best_cluster_size,
+        "avg_final_score": best_avg_final_score,
+        "avg_precision": np.mean([repetition_result["avg_precision"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "avg_recall": np.mean([repetition_result["avg_recall"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "avg_f1": np.mean([repetition_result["avg_f1"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "completeness": np.mean([repetition_result["assigned_fraction"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "orthogonality": np.mean([repetition_result["orthogonality"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "semantic_orthogonality": np.mean([repetition_result["semantic_orthogonality_score"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "statistics": best_cluster_eval_results["statistics"]
+    })
+
+    # Convert any numpy types to Python native types for JSON serialization
+    results_data = convert_numpy_types(results_data)
+
+    # Save results to JSON
+    with open(results_json_path, "w") as f:
+        json.dump(results_data, f, indent=2, cls=NumpyEncoder)
+    print_and_flush(f"Saved {clustering_method} results to {results_json_path}")
+
+    return results_data
 
 
 def convert_numpy_types(obj):

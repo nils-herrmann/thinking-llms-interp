@@ -57,14 +57,14 @@ def visualize_results(results_json_path):
     with open(results_json_path, 'r') as f:
         results = json.load(f)
     
-    # Extract basic info
+    # Extract basic info from new format
     model_id = results['model_id']
     layer = results['layer']
     method = results['clustering_method']
-    detailed_results = results['detailed_results']
+    results_by_cluster_size = results['results_by_cluster_size']
     
     # Extract cluster range from available data
-    available_clusters = sorted([int(k) for k in detailed_results.keys()])
+    available_clusters = sorted([int(k) for k in results_by_cluster_size.keys()])
     print(f"Cluster range available: {available_clusters}")
     
     # Filter to desired range
@@ -87,17 +87,16 @@ def visualize_results(results_json_path):
     
     # Extract data for each cluster count
     for n_clusters in cluster_range:
-        cluster_data = detailed_results[str(n_clusters)]
-
-        repetitions = cluster_data['all_repetitions']
+        cluster_results = results_by_cluster_size[str(n_clusters)]
+        all_repetitions = cluster_results['all_results']
         
         # Extract metrics from each repetition
-        rep_final_scores = [rep['final_score'] for rep in repetitions]
-        rep_f1_scores = [rep['avg_f1'] for rep in repetitions]
-        rep_accuracy_scores = [rep['avg_accuracy'] for rep in repetitions]
-        rep_confidence_scores = [rep['avg_confidence'] for rep in repetitions]
-        rep_orthogonality_scores = [rep['orthogonality'] for rep in repetitions]
-        rep_semantic_orthogonality_scores = [rep['semantic_orthogonality_score'] for rep in repetitions]
+        rep_final_scores = [rep['final_score'] for rep in all_repetitions]
+        rep_f1_scores = [rep['avg_f1'] for rep in all_repetitions]
+        rep_accuracy_scores = [rep['avg_accuracy'] for rep in all_repetitions]
+        rep_confidence_scores = [rep['assigned_fraction'] for rep in all_repetitions]  # This was avg_confidence in old format
+        rep_orthogonality_scores = [rep['orthogonality'] for rep in all_repetitions]
+        rep_semantic_orthogonality_scores = [rep['semantic_orthogonality_score'] for rep in all_repetitions]
         
         # Calculate statistics across repetitions
         for metric_name, values in [
@@ -230,26 +229,27 @@ def print_concise_summary(results_data, clustering_method):
     clustering_method : str
         Name of the clustering method
     """
-    # Extract data for printing
+    # Extract data for printing from new format
     model_id = results_data['model_id']
     layer = results_data['layer']
-    detailed_results_dict = results_data['detailed_results']
+    results_by_cluster_size = results_data['results_by_cluster_size']
+    best_cluster = results_data.get('best_cluster', {})
     
     # Get available cluster range and optimal from the results
-    available_clusters = sorted([int(k) for k in detailed_results_dict.keys()])
+    available_clusters = sorted([int(k) for k in results_by_cluster_size.keys()])
     
-    # Try to get optimal from summary, otherwise calculate from available data
-    optimal_n_clusters = results_data.get('optimal_n_clusters')
-    if optimal_n_clusters is None:
+    # Get optimal cluster size from best_cluster or calculate it
+    optimal_n_clusters = best_cluster.get('size')
+    if optimal_n_clusters is not None:
+        optimal_n_clusters = int(optimal_n_clusters)
+    else:
         # Calculate optimal based on median final scores
         final_scores = []
         for n_clusters in available_clusters:
-            cluster_data = detailed_results_dict[str(n_clusters)]
-            if 'all_repetitions' in cluster_data:
-                rep_final_scores = [rep['final_score'] for rep in cluster_data['all_repetitions']]
-                final_scores.append(np.median(rep_final_scores))
-            else:
-                final_scores.append(cluster_data.get('final_score', 0))
+            cluster_results = results_by_cluster_size[str(n_clusters)]
+            all_repetitions = cluster_results['all_results']
+            rep_final_scores = [rep['final_score'] for rep in all_repetitions]
+            final_scores.append(np.median(rep_final_scores))
         optimal_n_clusters = available_clusters[np.argmax(final_scores)]
 
     # Print concise summary of experiment
@@ -267,27 +267,13 @@ def print_concise_summary(results_data, clustering_method):
     print_and_flush(f"{'-'*10} {'-'*12} {'-'*12} {'-'*15}")
 
     for n_clusters in available_clusters:
-        cluster_data = detailed_results_dict[str(n_clusters)]
+        cluster_results = results_by_cluster_size[str(n_clusters)]
+        all_repetitions = cluster_results['all_results']
         
-        # Extract metrics from the structure
-        if 'best_repetition' in cluster_data:
-            # New structure with repetitions - use best repetition
-            best_rep = cluster_data['best_repetition']
-            accuracy = best_rep['avg_accuracy']
-            avg_f1 = best_rep['avg_f1']
-            orthogonality = best_rep['orthogonality']
-        else:
-            # Old structure fallback
-            accuracy = cluster_data.get('accuracy', 0)
-            orthogonality = cluster_data.get('orthogonality', 0)
-            
-            # Calculate average F1 from detailed results
-            cluster_results = cluster_data.get('detailed_results', {})
-            f1s = []
-            for cluster_id, metrics in cluster_results.items():
-                if isinstance(metrics, dict) and metrics.get('f1', 0) > 0:
-                    f1s.append(metrics['f1'])
-            avg_f1 = sum(f1s) / len(f1s) if f1s else 0
+        # Calculate medians across repetitions
+        accuracy = np.median([rep['avg_accuracy'] for rep in all_repetitions])
+        avg_f1 = np.median([rep['avg_f1'] for rep in all_repetitions])
+        orthogonality = np.median([rep['orthogonality'] for rep in all_repetitions])
         
         # Highlight the optimal cluster size
         prefix = "* " if n_clusters == optimal_n_clusters else "  "
@@ -300,13 +286,13 @@ def print_concise_summary(results_data, clustering_method):
     print_and_flush(f"{'Cluster ID':<10} {'Title':<40} {'Size':<8} {'Precision':<12} {'Recall':<12} {'F1':<8}")
     print_and_flush(f"{'-'*10} {'-'*40} {'-'*8} {'-'*12} {'-'*12} {'-'*8}")
 
-    optimal_cluster_data = detailed_results_dict[str(optimal_n_clusters)]
+    # Get details from the optimal clustering - take the best repetition
+    optimal_cluster_results = results_by_cluster_size[str(optimal_n_clusters)]
+    all_repetitions = optimal_cluster_results['all_results']
     
-    # Get detailed results from the appropriate structure
-    if 'best_repetition' in optimal_cluster_data:
-        optimal_detailed_results = optimal_cluster_data['best_repetition']['detailed_results']
-    else:
-        optimal_detailed_results = optimal_cluster_data.get('detailed_results', {})
+    # Find the best repetition based on final score
+    best_repetition = max(all_repetitions, key=lambda x: x['final_score'])
+    optimal_detailed_results = best_repetition['detailed_results']
 
     # Sort clusters by size
     sorted_clusters = sorted(

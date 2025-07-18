@@ -7,8 +7,8 @@ import torch
 import gc
 from utils.utils import print_and_flush
 from utils.clustering import (
-    convert_numpy_types, SUPPORTED_CLUSTERING_METHODS,
-    load_trained_clustering_data, predict_clusters, evaluate_clustering_scoring_metrics
+    SUPPORTED_CLUSTERING_METHODS,
+    load_trained_clustering_data, predict_clusters, evaluate_clustering_scoring_metrics, save_clustering_results
 )
 from utils import utils
 
@@ -21,10 +21,6 @@ parser.add_argument("--layer", type=int, default=12,
                     help="Layer to analyze")
 parser.add_argument("--n_examples", type=int, default=500,
                     help="Number of examples to analyze")
-parser.add_argument("--min_clusters", type=int, default=4,
-                    help="Minimum number of clusters")
-parser.add_argument("--max_clusters", type=int, default=20,
-                    help="Maximum number of clusters")
 parser.add_argument("--clustering_methods", type=str, nargs='+', 
                     default=list(SUPPORTED_CLUSTERING_METHODS),
                     help="Clustering methods to evaluate")
@@ -44,72 +40,7 @@ model_id = args.model.split('/')[-1].lower()
 clustering_methods = [method for method in args.clustering_methods if method in SUPPORTED_CLUSTERING_METHODS]
 
 # %%
-
-def re_evaluate_clustering_method_with_n_clusters(model_id, layer, n_clusters, method, activations, texts, re_compute_cluster_labels):
-    """
-    Evaluate a saved clustering model using comprehensive scoring metrics.
-    
-    Parameters:
-    -----------
-    model_id : str
-        Model identifier
-    layer : int
-        Layer number
-    n_clusters : int
-        Number of clusters
-    method : str
-        Clustering method name
-    activations : numpy.ndarray
-        Test data to evaluate on (should be normalized)
-    texts : list
-        List of texts corresponding to the activations
-    re_compute_cluster_labels : bool
-        Whether to recompute cluster labels
-        
-    Returns:
-    --------
-    dict
-        Dictionary containing comprehensive evaluation metrics
-    """
-    # Load the saved clustering model
-    clustering_data = load_trained_clustering_data(model_id, layer, n_clusters, method)
-    cluster_centers = clustering_data['cluster_centers']
-    
-    if re_compute_cluster_labels:
-        # Predict cluster labels with new activations
-        cluster_labels = predict_clusters(activations, clustering_data)
-        clustering_data['cluster_labels'] = cluster_labels
-    else:
-        cluster_labels = clustering_data['cluster_labels']
-    
-    # Use evaluate_clustering_scoring_metrics for comprehensive evaluation with repetitions
-    scoring_results = evaluate_clustering_scoring_metrics(
-        texts, 
-        cluster_labels, 
-        n_clusters, 
-        activations,
-        cluster_centers,
-        args.model,
-        args.n_autograder_examples,
-        args.description_examples,
-        repetitions=5  # Use 5 repetitions for evaluation
-    )
-    
-    # Extract the best repetition (highest final score) for return values
-    best_repetition = max(scoring_results["all_results"], key=lambda x: x["final_score"])
-    
-    return {
-        'avg_final_score': scoring_results['avg_final_score'],
-        'best_final_score': best_repetition['final_score'],
-        'best_repetition': best_repetition,
-        'all_repetitions': scoring_results['all_results'],
-        'n_repetitions': len(scoring_results['all_results']),
-        'n_clusters': n_clusters,
-        'method': method
-    }
-
-
-def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clusters, activations, all_texts, re_compute_cluster_labels):
+def re_evaluate_clustering_method(model_id, layer, method, activations, all_texts, re_compute_cluster_labels):
     """
     Evaluate a clustering method across different numbers of clusters and update the existing JSON file.
     
@@ -121,10 +52,6 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         Layer number
     method : str
         Clustering method name
-    min_clusters : int
-        Minimum number of clusters
-    max_clusters : int
-        Maximum number of clusters
     activations : numpy.ndarray
         Activations to evaluate on (should be normalized)
     all_texts : list
@@ -146,95 +73,45 @@ def re_evaluate_clustering_method(model_id, layer, method, min_clusters, max_clu
         existing_results = json.load(f)
     print_and_flush(f"Loaded existing results from {results_json_path}")
     
-    # Get existing detailed results or create new dict
-    existing_detailed_results = existing_results.get("detailed_results", {})
-    
-    cluster_range = list(range(min_clusters, max_clusters + 1))
-    print_and_flush(f"Testing {len(cluster_range)} different cluster counts...")
-    
-    # Process each cluster count
-    for n_clusters in tqdm(cluster_range, desc=f"{method.capitalize()} evaluation"):
-        print_and_flush(f"Processing {n_clusters} clusters...")
-        
-        # Evaluate this cluster count
-        results = re_evaluate_clustering_method_with_n_clusters(
-            model_id, layer, n_clusters, method, activations, all_texts, re_compute_cluster_labels
-        )
-        
-        # Store results for this cluster count in the new format
-        existing_detailed_results[str(n_clusters)] = {
-            "avg_final_score": results['avg_final_score'],
-            "best_final_score": results['best_final_score'],
-            "best_repetition": results['best_repetition'],
-            "all_repetitions": results['all_repetitions'],
-            "n_repetitions": results['n_repetitions']
-        }
-    
-    # Calculate summary metrics across all cluster counts
-    if existing_detailed_results:
-        # Extract key metrics for easy access
-        cluster_counts = sorted([int(k) for k in existing_detailed_results.keys()])
-        avg_final_scores = [existing_detailed_results[str(n)]["avg_final_score"] for n in cluster_counts]
-        best_final_scores = [existing_detailed_results[str(n)]["best_final_score"] for n in cluster_counts]
-        
-        # Find optimal cluster count based on average final score
-        optimal_n_clusters = cluster_counts[np.argmax(avg_final_scores)]
-        optimal_idx = cluster_counts.index(optimal_n_clusters)
-        
-        # Get metrics from the best repetition of the optimal cluster count
-        optimal_best_rep = existing_detailed_results[str(optimal_n_clusters)]["best_repetition"]
-        
-        # Extract metrics from all cluster counts for backward compatibility
-        accuracy_scores = [existing_detailed_results[str(n)]["best_repetition"]["avg_accuracy"] for n in cluster_counts]
-        precision_scores = [existing_detailed_results[str(n)]["best_repetition"]["avg_precision"] for n in cluster_counts]
-        recall_scores = [existing_detailed_results[str(n)]["best_repetition"]["avg_recall"] for n in cluster_counts]
-        f1_scores = [existing_detailed_results[str(n)]["best_repetition"]["avg_f1"] for n in cluster_counts]
-        assignment_rates = [existing_detailed_results[str(n)]["best_repetition"]["assigned_fraction"] for n in cluster_counts]
-        confidence_scores = [existing_detailed_results[str(n)]["best_repetition"]["avg_confidence"] for n in cluster_counts]
-        orthogonality_scores = [existing_detailed_results[str(n)]["best_repetition"]["orthogonality"] for n in cluster_counts]
-        semantic_orthogonality_scores = [existing_detailed_results[str(n)]["best_repetition"]["semantic_orthogonality_score"] for n in cluster_counts]
-        
-        # Update the existing results with summary metrics for backward compatibility
-        existing_results.update({
-            'cluster_range': cluster_counts,
-            'avg_final_scores': avg_final_scores,
-            'best_final_scores': best_final_scores,
-            'accuracy_scores': accuracy_scores,
-            'precision_scores': precision_scores,
-            'recall_scores': recall_scores,
-            'f1_scores': f1_scores,
-            'assignment_rates': assignment_rates,
-            'confidence_scores': confidence_scores,
-            'orthogonality_scores': orthogonality_scores,
-            'semantic_orthogonality_scores': semantic_orthogonality_scores,
-            'final_scores': best_final_scores,  # Use best scores as final scores
-            'optimal_n_clusters': optimal_n_clusters,
-            'optimal_avg_final_score': avg_final_scores[optimal_idx],
-            'optimal_best_final_score': best_final_scores[optimal_idx],
-            # Extract key metrics from optimal best repetition
-            'optimal_accuracy': optimal_best_rep["avg_accuracy"],
-            'optimal_precision': optimal_best_rep["avg_precision"],
-            'optimal_recall': optimal_best_rep["avg_recall"],
-            'optimal_f1': optimal_best_rep["avg_f1"],
-            'optimal_assignment_rate': optimal_best_rep["assigned_fraction"],
-            'optimal_confidence': optimal_best_rep["avg_confidence"],
-            'optimal_orthogonality': optimal_best_rep["orthogonality"],
-            'optimal_semantic_orthogonality': optimal_best_rep["semantic_orthogonality_score"],
-            'optimal_final_score': best_final_scores[optimal_idx],
-            'detailed_results': existing_detailed_results
-        })
-        
-        # Convert numpy types and save updated results
-        existing_results = convert_numpy_types(existing_results)
-        
-        with open(results_json_path, 'w') as f:
-            json.dump(existing_results, f, indent=2)
-        print_and_flush(f"Updated results saved to {results_json_path}")
-        
-        return existing_results
-    else:
+    cluster_sizes = list(existing_results.get("results_by_cluster_size", {}).keys())
+    if not cluster_sizes:
         print_and_flush("No clustering results to process.")
         return existing_results
+
+    print_and_flush(f"Testing {len(cluster_sizes)} different cluster sizes: {cluster_sizes}")
+    
+    # Process each cluster count
+    eval_results_by_cluster_size = {}
+    for cluster_size in tqdm(cluster_sizes, desc=f"{method.capitalize()} evaluation"):
+        print_and_flush(f"Processing {cluster_size} clusters...")
+        
+        # Load the saved clustering model
+        clustering_data = load_trained_clustering_data(model_id, layer, cluster_size, method)
+        cluster_centers = clustering_data['cluster_centers']
+        
+        if re_compute_cluster_labels:
+            # Predict cluster labels with new activations
+            cluster_labels = predict_clusters(activations, clustering_data)
+            clustering_data['cluster_labels'] = cluster_labels
+        else:
+            cluster_labels = clustering_data['cluster_labels']
+        
+        # Use evaluate_clustering_scoring_metrics for comprehensive evaluation with repetitions
+        scoring_results = evaluate_clustering_scoring_metrics(
+            all_texts, 
+            cluster_labels, 
+            cluster_size, 
+            activations,
+            cluster_centers,
+            args.model,
+            args.n_autograder_examples,
+            args.description_examples,
+            repetitions=5  # Use 5 repetitions for evaluation
+        )
+        
+        eval_results_by_cluster_size[cluster_size] = scoring_results
+
+    return save_clustering_results(model_id, layer, method, eval_results_by_cluster_size)
 
 
 def print_evaluation_summary(results, method):
@@ -313,7 +190,7 @@ print_and_flush("="*50)
 all_results = {}
 
 for method in clustering_methods:
-    results = re_evaluate_clustering_method(model_id, args.layer, method, args.min_clusters, args.max_clusters, all_activations, all_texts, args.re_compute_cluster_labels)
+    results = re_evaluate_clustering_method(model_id, args.layer, method, all_activations, all_texts, args.re_compute_cluster_labels)
     all_results[method] = results
     print_evaluation_summary(results, method)
 

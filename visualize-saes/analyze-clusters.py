@@ -22,26 +22,31 @@ for layer in layers:
         print(f"Warning: Results file not found for layer {layer}")
         continue
 
-    clusters_detailed_results = results['detailed_results']
+    # Use new format: results_by_cluster_size instead of detailed_results
+    results_by_cluster_size = results['results_by_cluster_size']
 
     for n_clusters in n_cluster_range:
-        if str(n_clusters) not in clusters_detailed_results:
+        if str(n_clusters) not in results_by_cluster_size:
             print(f"Warning: No data for layer {layer}, {n_clusters} clusters")
             continue
             
         print(f"=== Layer {layer}, {n_clusters} clusters ===")
-        cluster_data = clusters_detailed_results[str(n_clusters)]
+        cluster_results = results_by_cluster_size[str(n_clusters)]
+        
+        # Get metrics from new format
+        avg_final_score = cluster_results['avg_final_score']
+        all_repetitions = cluster_results['all_results']
+        
+        # Find the best repetition based on final score
+        best_repetition = max(all_repetitions, key=lambda x: x['final_score'])
+        best_final_score = best_repetition['final_score']
         
         # Extract metrics from the best repetition
-        best_rep = cluster_data['best_repetition']
-        avg_final_score = cluster_data['avg_final_score']
-        best_final_score = cluster_data['best_final_score']
-        
-        accuracy = best_rep['avg_accuracy']
-        orthogonality = best_rep['orthogonality']
-        semantic_orthogonality = best_rep['semantic_orthogonality_score']
-        completeness = best_rep['avg_confidence']
-        cluster_detailed_results = best_rep['detailed_results']
+        accuracy = best_repetition['avg_accuracy']
+        orthogonality = best_repetition['orthogonality']
+        semantic_orthogonality = best_repetition['semantic_orthogonality_score']
+        completeness = best_repetition['assigned_fraction']  # This was avg_confidence in old format
+        cluster_detailed_results = best_repetition['detailed_results']
         
         print(f"Average Final Score: {avg_final_score:.4f}")
         print(f"Best Final Score: {best_final_score:.4f}")
