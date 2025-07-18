@@ -1723,6 +1723,7 @@ def save_clustering_results(model_id, layer, clustering_method, eval_results_by_
     results_data["best_cluster"].update({
         "size": best_cluster_size,
         "avg_final_score": best_avg_final_score,
+        "avg_accuracy": np.mean([repetition_result["avg_accuracy"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "avg_precision": np.mean([repetition_result["avg_precision"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "avg_recall": np.mean([repetition_result["avg_recall"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "avg_f1": np.mean([repetition_result["avg_f1"] for repetition_result in best_cluster_eval_results["all_results"]]),

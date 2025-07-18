@@ -48,6 +48,7 @@ def visualize_method_comparison(model_id, layer, all_results):
         "gmm": "GMM",
         "spherical_kmeans": "K-means",
         "pca_kmeans": "PCA + K-means",
+        "sae_topk": "SAE TopK",
     }
     
     # Font sizes for plot elements
@@ -73,34 +74,15 @@ def visualize_method_comparison(model_id, layer, all_results):
             methods.append(method)
             display_names.append(method_names.get(method, method.replace('_', ' ').title()))
             
-            # Determine the result format and extract metrics accordingly
-            if 'orthogonality' in results:
-                orthogonality_scores.append(results['orthogonality'])
-            elif 'optimal_orthogonality' in results:
-                orthogonality_scores.append(results['optimal_orthogonality'])
-            else:
-                orthogonality_scores.append(0.0)  # Default if not found
-                
-            if 'assignment_rate' in results:
-                assignment_rates.append(results['assignment_rate'])
-            elif 'optimal_assignment_rate' in results:
-                assignment_rates.append(results['optimal_assignment_rate'])
-            else:
-                assignment_rates.append(0.0)  # Default if not found
-                
-            if 'accuracy' in results:
-                accuracy_scores.append(results['accuracy'])
-            elif 'optimal_accuracy' in results:
-                accuracy_scores.append(results['optimal_accuracy'])
-            else:
-                accuracy_scores.append(0.0)  # Default if not found
-                
-            if 'n_clusters' in results:
-                cluster_counts.append(results['n_clusters'])
-            elif 'optimal_n_clusters' in results:
-                cluster_counts.append(results['optimal_n_clusters'])
-            else:
-                cluster_counts.append(0)  # Default if not found
+            # Extract metrics from new format - use best_cluster section
+            best_cluster = results['best_cluster']
+            
+            orthogonality_scores.append(best_cluster['orthogonality'])
+            assignment_rates.append(best_cluster['completeness'])
+            
+            # Use avg_precision as accuracy (best available metric)
+            accuracy_scores.append(best_cluster['avg_precision'])
+            cluster_counts.append(int(best_cluster['size']))
                 
         except Exception as e:
             print_and_flush(f"Error processing results for {method}: {e}")
@@ -123,7 +105,7 @@ def visualize_method_comparison(model_id, layer, all_results):
     # Plot bars with nice colors
     bars1 = ax.bar(x - width, orthogonality_scores, width, label='Orthogonality', color='skyblue')
     bars2 = ax.bar(x, assignment_rates, width, label='Completeness', color='salmon')
-    bars3 = ax.bar(x + width, accuracy_scores, width, label='Accuracy', color='lightgreen', edgecolor='black', linewidth=1)
+    bars3 = ax.bar(x + width, accuracy_scores, width, label='Precision', color='lightgreen', edgecolor='black', linewidth=1)
     
     # Add labels and title
     ax.set_ylabel('Score', fontsize=font_sizes["axes"])
@@ -171,11 +153,12 @@ def print_methods_comparison_summary(all_results):
     print_and_flush(f"{'-'*15} {'-'*10} {'-'*12} {'-'*12} {'-'*15}")
     
     for method, results in all_results.items():
-        # Get the metrics
-        n_clusters = results['optimal_n_clusters']
-        accuracy = results['optimal_accuracy']
-        f1 = results['optimal_f1']
-        orthogonality = results['optimal_orthogonality']
+        # Get the metrics from new format - use best_cluster section
+        best_cluster = results['best_cluster']
+        n_clusters = int(best_cluster['size'])
+        accuracy = best_cluster['avg_accuracy']
+        f1 = best_cluster['avg_f1']
+        orthogonality = best_cluster['orthogonality']
             
         print_and_flush(f"{method.capitalize():<15} {n_clusters:<10} "
               f"{accuracy:<12.4f} "
