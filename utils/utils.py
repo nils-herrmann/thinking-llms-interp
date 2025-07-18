@@ -185,7 +185,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
         max_concurrent_requests=max_concurrent_requests,
         max_retries_per_item=max_retries_per_item,
         group_by_model=True,
-        print_request_initiation=True,
+        # print_request_initiation=True,
     )
     
     # Process batch with increased timeout for reliability
