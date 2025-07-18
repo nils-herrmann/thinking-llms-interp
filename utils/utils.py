@@ -169,7 +169,7 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
         list: List of responses corresponding to the prompts
     """
     temperature = 1e-19
-    if model == "o3":
+    if model.startswith("o3") or model.startswith("o4"):
         temperature = 1
 
     # Create chat completion requests
