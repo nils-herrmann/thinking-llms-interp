@@ -81,12 +81,12 @@ def visualize_results(results_json_path, args):
     
     # Initialize lists for metrics
     metrics = {
-        'final_scores': {'median': [], 'min': [], 'max': []},
-        'f1_scores': {'median': [], 'min': [], 'max': []},
-        'accuracy_scores': {'median': [], 'min': [], 'max': []},
-        'confidence_scores': {'median': [], 'min': [], 'max': []},
-        'orthogonality_scores': {'median': [], 'min': [], 'max': []},
-        'semantic_orthogonality_scores': {'median': [], 'min': [], 'max': []}
+        'final_scores': {'mean': [], 'min': [], 'max': []},
+        'f1_scores': {'mean': [], 'min': [], 'max': []},
+        'accuracy_scores': {'mean': [], 'min': [], 'max': []},
+        'confidence_scores': {'mean': [], 'min': [], 'max': []},
+        'orthogonality_scores': {'mean': [], 'min': [], 'max': []},
+        'semantic_orthogonality_scores': {'mean': [], 'min': [], 'max': []}
     }
     
     # Extract data for each cluster count
@@ -111,12 +111,12 @@ def visualize_results(results_json_path, args):
             ('orthogonality_scores', rep_orthogonality_scores),
             ('semantic_orthogonality_scores', rep_semantic_orthogonality_scores)
         ]:
-            metrics[metric_name]['median'].append(np.median(values))
+            metrics[metric_name]['mean'].append(np.mean(values))
             metrics[metric_name]['min'].append(np.min(values))
             metrics[metric_name]['max'].append(np.max(values))
     
     # Find optimal cluster count based on median final score
-    optimal_n_clusters = cluster_range[np.argmax(metrics['final_scores']['median'])]
+    optimal_n_clusters = int(results['best_cluster']['size'])
     
     # Create figure with 3x2 subplots
     fig, axs = plt.subplots(3, 2, figsize=(15, 18))
@@ -124,12 +124,12 @@ def visualize_results(results_json_path, args):
     # Define x-coordinates for vertical lines
     vertical_lines_x = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
     
-    def plot_with_uncertainty(ax, x, median, min_vals, max_vals, color, xlabel, ylabel, title):
+    def plot_with_uncertainty(ax, x, mean, min_vals, max_vals, color, xlabel, ylabel, title):
         """Helper function to plot line with uncertainty band"""
         # Plot uncertainty band
         ax.fill_between(x, min_vals, max_vals, alpha=0.2, color=color, label='Min-Max Range')
-        # Plot median line
-        ax.plot(x, median, 'o-', color=color, linewidth=2, label='Median')
+        # Plot mean line
+        ax.plot(x, mean, 'o-', color=color, linewidth=2, label='Mean')
         
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
@@ -145,7 +145,7 @@ def visualize_results(results_json_path, args):
     # Final Score (combined metric) - Top Left
     plot_with_uncertainty(
         axs[0, 0], cluster_range, 
-        metrics['final_scores']['median'], 
+        metrics['final_scores']['mean'], 
         metrics['final_scores']['min'], 
         metrics['final_scores']['max'], 
         'blue', 'Number of Clusters', 'Final Score', 
@@ -155,7 +155,7 @@ def visualize_results(results_json_path, args):
     # F1 Score - Top Right
     plot_with_uncertainty(
         axs[0, 1], cluster_range,
-        metrics['f1_scores']['median'],
+        metrics['f1_scores']['mean'],
         metrics['f1_scores']['min'],
         metrics['f1_scores']['max'],
         'red', 'Number of Clusters', 'Average F1 Score',
@@ -165,7 +165,7 @@ def visualize_results(results_json_path, args):
     # Semantic Orthogonality - Middle Left
     plot_with_uncertainty(
         axs[1, 0], cluster_range,
-        metrics['semantic_orthogonality_scores']['median'],
+        metrics['semantic_orthogonality_scores']['mean'],
         metrics['semantic_orthogonality_scores']['min'],
         metrics['semantic_orthogonality_scores']['max'],
         'brown', 'Number of Clusters', 'Semantic Orthogonality',
@@ -175,7 +175,7 @@ def visualize_results(results_json_path, args):
     # Completeness - Middle Right
     plot_with_uncertainty(
         axs[1, 1], cluster_range,
-        metrics['confidence_scores']['median'],
+        metrics['confidence_scores']['mean'],
         metrics['confidence_scores']['min'],
         metrics['confidence_scores']['max'],
         'purple', 'Number of Clusters', 'Completeness',
@@ -185,7 +185,7 @@ def visualize_results(results_json_path, args):
     # Centroid Orthogonality - Bottom Left
     plot_with_uncertainty(
         axs[2, 0], cluster_range,
-        metrics['orthogonality_scores']['median'],
+        metrics['orthogonality_scores']['mean'],
         metrics['orthogonality_scores']['min'],
         metrics['orthogonality_scores']['max'],
         'orange', 'Number of Clusters', 'Orthogonality',
@@ -195,7 +195,7 @@ def visualize_results(results_json_path, args):
     # Accuracy - Bottom Right
     plot_with_uncertainty(
         axs[2, 1], cluster_range,
-        metrics['accuracy_scores']['median'],
+        metrics['accuracy_scores']['mean'],
         metrics['accuracy_scores']['min'],
         metrics['accuracy_scores']['max'],
         'green', 'Number of Clusters', 'Accuracy',
@@ -204,7 +204,7 @@ def visualize_results(results_json_path, args):
     
     # Add overall title
     method_name = method.capitalize()
-    plt.suptitle(f'{method_name} Clustering Metrics Summary (Model: {model_id}, Layer: {layer})\nLines show median across repetitions, bands show min-max range', fontsize=14)
+    plt.suptitle(f'{method_name} Clustering Metrics Summary (Model: {model_id}, Layer: {layer})\nLines show mean across repetitions, bands show min-max range', fontsize=14)
     
     # Save figure
     plt.tight_layout(rect=(0, 0, 1, 0.96))  # Adjust for suptitle
@@ -243,13 +243,13 @@ def print_concise_summary(results_data, clustering_method):
     if optimal_n_clusters is not None:
         optimal_n_clusters = int(optimal_n_clusters)
     else:
-        # Calculate optimal based on median final scores
+        # Calculate optimal based on mean final scores
         final_scores = []
         for n_clusters in available_clusters:
             cluster_results = results_by_cluster_size[str(n_clusters)]
             all_repetitions = cluster_results['all_results']
             rep_final_scores = [rep['final_score'] for rep in all_repetitions]
-            final_scores.append(np.median(rep_final_scores))
+            final_scores.append(np.mean(rep_final_scores))
         optimal_n_clusters = available_clusters[np.argmax(final_scores)]
 
     # Print concise summary of experiment
@@ -270,10 +270,10 @@ def print_concise_summary(results_data, clustering_method):
         cluster_results = results_by_cluster_size[str(n_clusters)]
         all_repetitions = cluster_results['all_results']
         
-        # Calculate medians across repetitions
-        accuracy = np.median([rep['avg_accuracy'] for rep in all_repetitions])
-        avg_f1 = np.median([rep['avg_f1'] for rep in all_repetitions])
-        orthogonality = np.median([rep['orthogonality'] for rep in all_repetitions])
+        # Calculate means across repetitions
+        accuracy = np.mean([rep['avg_accuracy'] for rep in all_repetitions])
+        avg_f1 = np.mean([rep['avg_f1'] for rep in all_repetitions])
+        orthogonality = np.mean([rep['orthogonality'] for rep in all_repetitions])
         
         # Highlight the optimal cluster size
         prefix = "* " if n_clusters == optimal_n_clusters else "  "
