@@ -12,7 +12,7 @@ for LAYER in 6 10 14 18 22 26; do
     python ablate_clustering.py --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B --layer $LAYER --clusters $CLUSTERS --n_examples $N_EXAMPLES --clustering_methods sae_topk
     # python re_evaluate_trained_clustering.py --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B --layer $LAYER --clusters $CLUSTERS --n_examples $N_EXAMPLES --clustering_methods sae_topk
     python visualize_results.py --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B --layer $LAYER --clusters $CLUSTERS
-    python visualize_comparison.py --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B --layer $LAYER
+    # python visualize_comparison.py --model deepseek-ai/DeepSeek-R1-Distill-Llama-8B --layer $LAYER
 done
 
 # for LAYER in 8 14 20 26 32 38; do

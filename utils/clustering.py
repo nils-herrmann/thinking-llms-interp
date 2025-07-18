@@ -1692,6 +1692,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         
         n = len(values)
         if n > 1:
+            std_dev = np.std(values, ddof=1)  # Sample standard deviation
             sem = stats.sem(values)
             # 95% confidence interval using the t-distribution, which is more accurate for small sample sizes.
             conf = 0.95
