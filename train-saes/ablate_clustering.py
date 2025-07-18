@@ -158,6 +158,10 @@ def run_clustering_experiment(
 
         eval_results_by_cluster_size[n_clusters] = evaluation_results
 
+        # Save what we have so far
+        results_data = save_clustering_results(args.model, args.layer, clustering_method, eval_results_by_cluster_size)
+
+    # Final save just in case
     results_data = save_clustering_results(args.model, args.layer, clustering_method, eval_results_by_cluster_size)
 
     return results_data
