@@ -1653,7 +1653,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
 
         # Create detailed results by cluster
         detailed_results = {}
-        for cluster_id, title, description in tqdm(categories, desc="Creating detailed results"):
+        for cluster_id, title, description in categories:
             cluster_id_str = str(cluster_id)
             cluster_metrics = accuracy_results.get(cluster_id_str, {})
             cluster_idx = int(cluster_id)
