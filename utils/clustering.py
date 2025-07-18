@@ -1560,7 +1560,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         
         # Run binary accuracy autograder (evaluates each cluster independently)
         accuracy_results = evaluate_clustering_accuracy(
-            texts, cluster_labels, categories, "o3", n_autograder_examples
+            texts, cluster_labels, categories, "gpt-4.1", n_autograder_examples
         )
         rep_results["avg_accuracy"] = accuracy_results["avg"]["accuracy"]
         rep_results["avg_f1"] = accuracy_results["avg"]["f1"]
