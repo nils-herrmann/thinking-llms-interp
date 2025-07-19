@@ -374,24 +374,13 @@ def test_on_unseen_example(model, tokenizer, vector, layer, test_example, max_ne
 
 def save_hyperparameters(hyperparams, model_name_short, steering_vector_idx, category):
     """Save hyperparameters for a specific steering vector for reproducibility"""
-    hp_dir = "results/vars"
+    hp_dir = "results/vars/hyperparams"
     os.makedirs(hp_dir, exist_ok=True)
     
-    hp_file = f"{hp_dir}/steering_vector_hyperparams.json"
-    
-    # Load existing hyperparameters if file exists
-    if os.path.exists(hp_file):
-        with open(hp_file, 'r') as f:
-            all_hyperparams = json.load(f)
-    else:
-        all_hyperparams = {}
-    
-    # Create model entry if it doesn't exist
-    if model_name_short not in all_hyperparams:
-        all_hyperparams[model_name_short] = {}
-    
+    hp_file = f"{hp_dir}/steering_vector_hyperparams_{model_name_short}_{steering_vector_idx}.json"
+
     # Update hyperparameters for this vector
-    all_hyperparams[model_name_short][str(steering_vector_idx)] = {
+    all_hyperparams[str(steering_vector_idx)] = {
         "category": category,
         "hyperparameters": hyperparams
     }
