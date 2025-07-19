@@ -19,7 +19,7 @@ for cluster in "$@"; do
         --max_iters 20 \
         --n_training_examples 2048 \
         --minibatch_size 8 \
-        --layer 14 \
+        --layer 6 \
         --has_bos_token True \
         --steering_vector_idx $cluster \
         --lr "1e-2" \
