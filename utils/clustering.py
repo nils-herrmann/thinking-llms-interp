@@ -470,9 +470,11 @@ def predict_clusters(activations, clustering_data):
         raise ValueError(f"Unknown clustering method: {method}")
 
 
-def get_latent_descriptions(model_id, layer, n_clusters):
-    """Get titles and descriptions for SAE latents"""
-    results_path = f'../train-saes/results/vars/sae_topk_results_{model_id}_layer{layer}.json'
+def get_latent_descriptions(model_id, layer, n_clusters, clustering_method='sae_topk'):
+    """Get titles and descriptions for cluster latents from the new results format"""
+    # Use the new file naming convention
+    model_short_name = model_id.split("/")[-1].lower()
+    results_path = f'../train-saes/results/vars/{clustering_method}_results_{model_short_name}_layer{layer}.json'
     
     if not os.path.exists(results_path):
         print(f"Warning: Results file not found at {results_path}")
@@ -482,14 +484,16 @@ def get_latent_descriptions(model_id, layer, n_clusters):
         with open(results_path, 'r') as f:
             results = json.load(f)
         
-        # Extract category descriptions for optimal_n_clusters
-        if str(n_clusters) in results.get('detailed_results', {}):
-            optimal_results = results['detailed_results'][str(n_clusters)]
-            if 'categories' in optimal_results:
-                categories = {}
-                for cluster_id, title, description in optimal_results['categories']:
-                    categories[int(cluster_id)] = {'title': title, 'description': description}
-                return categories
+        # Extract category descriptions from the first repetition for the specified n_clusters
+        if str(n_clusters) in results.get('results_by_cluster_size', {}):
+            cluster_results = results['results_by_cluster_size'][str(n_clusters)]
+            if 'all_results' in cluster_results and len(cluster_results['all_results']) > 0:
+                first_repetition = cluster_results['all_results'][0]
+                if 'categories' in first_repetition:
+                    categories = {}
+                    for cluster_id, title, description in first_repetition['categories']:
+                        categories[int(cluster_id)] = {'title': title, 'description': description}
+                    return categories
     except Exception as e:
         print(f"Error loading cluster descriptions: {e}")
     
