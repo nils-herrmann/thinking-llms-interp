@@ -470,7 +470,7 @@ def predict_clusters(activations, clustering_data):
         raise ValueError(f"Unknown clustering method: {method}")
 
 
-def get_latent_descriptions(model_id, layer, n_clusters, clustering_method='sae_topk'):
+def get_latent_descriptions(model_id, layer, n_clusters, clustering_method='sae_topk', sorted=False):
     """Get titles and descriptions for cluster latents from the new results format"""
     # Use the new file naming convention
     model_short_name = model_id.split("/")[-1].lower()
@@ -490,10 +490,15 @@ def get_latent_descriptions(model_id, layer, n_clusters, clustering_method='sae_
             if 'all_results' in cluster_results and len(cluster_results['all_results']) > 0:
                 first_repetition = cluster_results['all_results'][0]
                 if 'categories' in first_repetition:
-                    categories = {}
-                    for cluster_id, title, description in first_repetition['categories']:
-                        categories[int(cluster_id)] = {'title': title, 'description': description}
-                    return categories
+                    if sorted:
+                        categories = [{'key': title.lower().replace(" ", "-"), 'title': title, 'description': description} for cluster_id, title, description in first_repetition['categories']]
+                        categories.sort(key=lambda x: x['key'])
+                        return {pos: item for pos, item in enumerate(categories)}
+                    else:
+                        categories = {}
+                        for cluster_id, title, description in first_repetition['categories']:
+                            categories[int(cluster_id)] = {'key': title.lower().replace(" ", "-"), 'title': title, 'description': description}
+                        return categories
     except Exception as e:
         print(f"Error loading cluster descriptions: {e}")
     

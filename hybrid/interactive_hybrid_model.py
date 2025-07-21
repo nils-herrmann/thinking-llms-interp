@@ -267,25 +267,29 @@ def load_steering_vectors(model_id, thinking_model_id, thinking_layer, n_cluster
         return {}
     
     # Get latent descriptions to map indices to titles
-    descriptions = get_latent_descriptions(thinking_model_id, thinking_layer, n_clusters)
+    descriptions = get_latent_descriptions(thinking_model_id, thinking_layer, n_clusters, sorted=True)
+    print(f"Latent descriptions: {descriptions}")
     
     # Load all steering vector files
+    print(f"Loading steering vectors for {model_id} layer {thinking_layer}, n_clusters {n_clusters}")
     steering_vectors = {}
-    for filename in os.listdir(vectors_dir):
-        if filename.startswith(f"{model_id}_layer{thinking_layer}_idx") and filename.endswith(".pt"):
-            # Extract the index from filename
-            match = re.search(rf"{re.escape(model_id)}_layer{thinking_layer}_idx(\d+)\.pt", filename)
-            if match:
-                idx = int(match.group(1))
-                if idx in descriptions:
-                    # Load the steering vector
-                    vector_path = os.path.join(vectors_dir, filename)
-                    vector = torch.load(vector_path)
-                    
-                    # Get the latent title and format it as expected
-                    latent_title = descriptions[idx]["title"]
-                    key = latent_title.lower().replace(" ", "-")
-                    steering_vectors[key] = vector
+    for idx in range(n_clusters):
+        filename = f"{model_id}_layer{thinking_layer}_idx{idx}.pt"
+        if os.path.exists(os.path.join(vectors_dir, filename)):
+            # Load the steering vector
+            vector_path = os.path.join(vectors_dir, filename)
+            vector_dict = torch.load(vector_path)
+
+            print(f"Loaded steering vector for {filename}: {vector_dict}")
+            
+            # Get the latent title and format it as expected
+            latent_title = descriptions[idx]["title"]
+            key = latent_title.lower().replace(" ", "-")
+
+            assert key in vector_dict, f"Key {key} not found in {filename}"
+            vector = vector_dict[key]
+
+            steering_vectors[key] = vector
     
     return steering_vectors
 
@@ -392,7 +396,7 @@ def load_models_and_sae(args):
     sae = sae.to(thinking_model.device)
 
     print(f"Loading steering vectors and layer effects...")
-    descriptions = get_latent_descriptions(thinking_model_id, args.thinking_layer, args.n_clusters)
+    descriptions = get_latent_descriptions(thinking_model_id, args.thinking_layer, args.n_clusters, sorted=True)
     steering_vectors = load_steering_vectors(base_model_id, thinking_model_id, args.thinking_layer, args.n_clusters)
 
     return thinking_model, thinking_tokenizer, base_model, base_tokenizer, sae, steering_vectors, descriptions, thinking_model_id, base_model_id
