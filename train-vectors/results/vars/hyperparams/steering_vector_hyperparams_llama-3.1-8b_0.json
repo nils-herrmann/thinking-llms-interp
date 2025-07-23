@@ -1,20 +1,18 @@
 {
-  "category": "background-knowledge-recall-/-example-provision",
+  "category": "alternative-option-generation-(\u201canother-angle\u2026-/-alternatively\u2026\u201d-statements)",
   "hyperparameters": {
-    "layer": 6,
-    "max_iters": 20,
+    "layer": 12,
+    "max_iters": 50,
     "learning_rates": [
       0.01
     ],
     "best_lr": 0.01,
     "context_sentences": 0,
     "seed": 42,
-    "test_examples_pct": 1,
-    "n_training_examples": 2005,
-    "n_test_examples": 2005,
-    "vector_norm": 11.439032554626465,
+    "n_training_examples": 128,
+    "vector_norm": 18.024574279785156,
     "grad_clip": null,
-    "minibatch_size": 6,
+    "minibatch_size": 4,
     "steering_token_window": 50
   }
 }

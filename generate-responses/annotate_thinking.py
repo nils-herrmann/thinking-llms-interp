@@ -17,11 +17,11 @@ sys.path.append('..')
 from utils import utils
 
 parser = argparse.ArgumentParser(description="Annotate thinking processes in generated responses")
-parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
                     help="Model used to generate responses")
-parser.add_argument("--layer", type=int, default=14,
+parser.add_argument("--layer", type=int, default=6,
                     help="Layer to analyze")
-parser.add_argument("--n_clusters", type=int, default=19,
+parser.add_argument("--n_clusters", type=int, default=15,
                     help="Number of clusters in the SAE")
 args, _ = parser.parse_known_args()
 

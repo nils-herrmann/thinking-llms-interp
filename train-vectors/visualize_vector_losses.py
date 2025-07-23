@@ -14,7 +14,7 @@ import argparse
 parser = argparse.ArgumentParser(description="Visualize vector losses")
 parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-8B",
                     help="Model name")
-parser.add_argument("--smoothing_sigma", type=float, default=5.0,
+parser.add_argument("--smoothing_sigma", type=float, default=3.0,
                     help="Sigma parameter for Gaussian smoothing")
 
 args, _ = parser.parse_known_args()
@@ -123,7 +123,7 @@ def visualize_vector_losses(model_name, smoothing_sigma=1000000):
     
     # Calculate grid dimensions
     n_plots = len(loss_files)
-    n_cols = 7  # 5 plots per row (already set)
+    n_cols = 5  # 5 plots per row (already set)
     n_rows = math.ceil(n_plots / n_cols)
     
     # Create a figure with proper gridspec for centering the last row

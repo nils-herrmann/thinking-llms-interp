@@ -180,14 +180,23 @@ async def chat_batch(prompts, model="gpt-4.1", max_tokens=28000, max_concurrent_
         temperature=temperature,
     )
     
-    # Configure batch processing
-    config = BatchConfig(
-        max_concurrent_requests=max_concurrent_requests,
-        max_retries_per_item=max_retries_per_item,
-        group_by_model=True,
-        json_mode=json_mode,
-        # print_request_initiation=True,
-    )
+    # Instantiate BatchConfig, accounting for versions without a `json_mode` parameter
+    try:
+        config = BatchConfig(
+            max_concurrent_requests=max_concurrent_requests,
+            max_retries_per_item=max_retries_per_item,
+            group_by_model=True,
+            json_mode=json_mode,
+            # print_request_initiation=True,
+        )
+    except TypeError:
+        # Fallback for older/newer versions of chat_limiter without `json_mode`
+        config = BatchConfig(
+            max_concurrent_requests=max_concurrent_requests,
+            max_retries_per_item=max_retries_per_item,
+            group_by_model=True,
+            # print_request_initiation=True,
+        )
     
     # Process batch with increased timeout for reliability
     async with ChatLimiter.for_model(model, timeout=240.0) as limiter:
@@ -623,140 +632,114 @@ def split_into_sentences(text, min_words=3):
     return processed_sentences
 
 
-def submit_openai_batch(prompts_with_ids, batch_description="Clustering evaluation batch", model="gpt-4.1", temperature=1e-19, max_tokens=28000):
-    """
-    Submit a batch of prompts to OpenAI's batch API.
-    
-    Args:
-        prompts_with_ids (dict): Dictionary mapping custom_id to prompt text
-        batch_description (str): Description for the batch
-        model (str): OpenAI model to use
-        temperature (float): Temperature parameter
-        max_tokens (int): Maximum tokens per response
-        
-    Returns:
-        str: Batch ID for tracking the submitted batch
-    """
-    import tempfile
-    
-    client = OpenAI()
+def load_steering_vectors(device: str = "cpu", hyperparams_dir: str | None = None, vectors_dir: str | None = None, verbose: bool = False):
+    """Load all optimized steering vectors and return a mapping of category -> vector.
 
-    if model.startswith("o3") or model.startswith("o4"):
-        temperature = 1.0
-    
-    # Create batch requests
-    batch_requests = []
-    for custom_id, prompt in prompts_with_ids.items():
-        batch_requests.append({
-            "custom_id": custom_id,
-            "method": "POST", 
-            "url": "/v1/chat/completions",
-            "body": {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-        })
-    
-    # Create temporary JSONL file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as f:
-        for request in batch_requests:
-            json.dump(request, f)
-            f.write('\n')
-        batch_input_path = f.name
-    
-    try:
-        # Upload batch input file
-        with open(batch_input_path, 'rb') as f:
-            batch_input_file = client.files.create(file=f, purpose="batch")
-        
-        # Create the batch
-        batch = client.batches.create(
-            input_file_id=batch_input_file.id,
-            endpoint="/v1/chat/completions", 
-            completion_window="24h",
-            metadata={"description": batch_description}
-        )
-        
-        print(f"Submitted batch {batch.id} with {len(batch_requests)} requests")
-        return batch.id
-        
-    finally:
-        # Clean up temporary file
-        os.unlink(batch_input_path)
+    The optimizer (see `train-vectors/optimize_steering_vectors.py`) saves:
+      1. Hyperparameter files:  train-vectors/results/vars/hyperparams/steering_vector_hyperparams_{model}_{idx}.json
+         Each JSON has a top-level key ``category`` indicating which reasoning category the vector targets.
+      2. Vector files:          train-vectors/results/vars/optimized_vectors/{model}_idx{idx}.pt
+         Each ``.pt`` file stores a ``dict`` mapping that same category name to a ``torch.Tensor``.
 
+    This helper searches those directories, pairs the JSONs and ``.pt`` files by *model* and *idx*,
+    then builds a single dictionary ``{category_name: tensor_on_requested_device}``.
 
-def process_batch_results(batch_id):
+    Parameters
+    ----------
+    device : str, default "cpu"
+        Device onto which the vectors should be loaded (e.g. "cuda", "cuda:0").
+    hyperparams_dir : str | None
+        Path to directory containing the hyperparameter JSONs.  If ``None`` we use the
+        default ``cot-interp/train-vectors/results/vars/hyperparams``.
+    vectors_dir : str | None
+        Path to directory containing the ``.pt`` vector files.  If ``None`` we use the
+        default ``cot-interp/train-vectors/results/vars/optimized_vectors``.
+    verbose : bool, default False
+        If True, print information about loaded vectors and any files that could not be matched.
+
+    Returns
+    -------
+    dict[str, torch.Tensor]
+        Mapping from reasoning *category* to the corresponding steering *vector* tensor.
     """
-    Process results from a completed OpenAI batch.
-    
-    Args:
-        batch_id (str): The batch ID to process
-        
-    Returns:
-        dict: Dictionary mapping custom_id to response content
-    """
-    client = OpenAI()
-    
-    # Get batch status
-    batch = client.batches.retrieve(batch_id)
-    if batch.status != "completed":
-        raise ValueError(f"Batch not completed. Current status: {batch.status}")
-    
-    # Get the output file  
-    if not batch.output_file_id:
-        raise ValueError("No output file available")
-    
-    # Download and process results
-    file_response = client.files.content(batch.output_file_id)
-    results = {}
-    
-    # Process each line of the output file
-    for line in file_response.text.splitlines():
-        result = json.loads(line)
-        custom_id = result.get("custom_id")
-        
-        if custom_id:
-            # Check for errors
-            if result.get("error"):
-                print(f"Error in request {custom_id}: {result['error']}")
-                results[custom_id] = None
-                continue
-                
-            # Extract response content
-            response = result.get("response", {}).get("body", {})
-            choices = response.get("choices", [])
-            if choices and choices[0].get("message", {}).get("content"):
-                content = choices[0]["message"]["content"]
-                results[custom_id] = content
+
+    import glob  # Local import to avoid slowing start-up when not needed
+
+    # Resolve default directories relative to this utils.py file
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "train-vectors"))
+
+    if hyperparams_dir is None:
+        hyperparams_dir = os.path.join(base_dir, "results", "vars", "hyperparams")
+    if vectors_dir is None:
+        vectors_dir = os.path.join(base_dir, "results", "vars", "optimized_vectors")
+
+    if verbose:
+        print_and_flush(f"Loading steering vectors from:\n  Hyperparams: {hyperparams_dir}\n  Vectors:     {vectors_dir}")
+
+    # Pattern to extract {model_name_short} and {idx} from filenames
+    hp_pattern = re.compile(r"steering_vector_hyperparams_(.+?)_(\d+)\.json")
+
+    category_to_vector: dict[str, torch.Tensor] = {}
+
+    for hp_path in glob.glob(os.path.join(hyperparams_dir, "steering_vector_hyperparams_*.json")):
+        hp_file = os.path.basename(hp_path)
+        match = hp_pattern.match(hp_file)
+        if match is None:
+            if verbose:
+                print_and_flush(f"[load_steering_vectors] Skipping unrecognised file name: {hp_file}")
+            continue
+
+        model_name_short, idx_str = match.groups()
+        vector_path = os.path.join(vectors_dir, f"{model_name_short}_idx{idx_str}.pt")
+
+        # Load hyperparameters JSON to get the category name
+        try:
+            with open(hp_path, "r") as f:
+                hp_data = json.load(f)
+            category = hp_data.get("category")
+        except Exception as e:
+            if verbose:
+                print_and_flush(f"[load_steering_vectors] Failed to read {hp_file}: {e}")
+            continue
+
+        if category is None:
+            if verbose:
+                print_and_flush(f"[load_steering_vectors] No 'category' field in {hp_file}. Skipping.")
+            continue
+
+        # Ensure the vector file exists
+        if not os.path.exists(vector_path):
+            if verbose:
+                print_and_flush(f"[load_steering_vectors] Vector file not found for {category}: {vector_path}")
+            continue
+
+        try:
+            vec_dict = torch.load(vector_path, map_location=device)
+        except Exception as e:
+            if verbose:
+                print_and_flush(f"[load_steering_vectors] Could not load tensor from {vector_path}: {e}")
+            continue
+
+        # The saved dict is {category_name: tensor}
+        if category not in vec_dict:
+            # Some older runs may save just the tensor; handle that case.
+            if isinstance(vec_dict, torch.Tensor):
+                vector_tensor = vec_dict
             else:
-                print(f"Invalid content in request {custom_id}")
-                results[custom_id] = None
-    
-    # Check for errors file
-    if batch.error_file_id:
-        error_response = client.files.content(batch.error_file_id)
-        for line in error_response.text.splitlines():
-            error = json.loads(line)
-            print(f"Batch error: {error}")
-    
-    print(f"Processed batch {batch_id} with {len(results)} results")
-    return results
+                if verbose:
+                    print_and_flush(f"[load_steering_vectors] Category '{category}' not in vector file {vector_path}. Keys: {list(vec_dict.keys())}")
+                continue
+        else:
+            vector_tensor = vec_dict[category]
 
+        # Move tensor to desired device and ensure float32/float16 is preserved
+        vector_tensor = vector_tensor.to(device)
+        category_to_vector[category] = vector_tensor
 
-def check_batch_status(batch_id):
-    """
-    Check the status of an OpenAI batch.
-    
-    Args:
-        batch_id (str): The batch ID to check
-        
-    Returns:
-        str: The current status of the batch
-    """
-    client = OpenAI()
-    batch = client.batches.retrieve(batch_id)
-    return batch.status
+        if verbose:
+            print_and_flush(f"[load_steering_vectors] Loaded vector for '{category}' from idx {idx_str} (model {model_name_short})")
 
+    if verbose:
+        print_and_flush(f"[load_steering_vectors] Loaded {len(category_to_vector)} vectors.")
 
+    return category_to_vector

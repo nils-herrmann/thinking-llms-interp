@@ -110,8 +110,6 @@ def optimize_vector_simple(
     return_info: bool = True,
     return_loss_history: bool = False,
     steering_token_window: Optional[int] = None,
-    eval_prompts: Optional[List[str]] = None,
-    eval_target_completions: Optional[List[str]] = None,
     projection_clamp: bool = False,
     wandb_run=None,
 ):
@@ -120,8 +118,7 @@ def optimize_vector_simple(
     # ---------------- Pre‑flight checks ---------------- #
     if len(prompts) != len(target_completions):
         raise ValueError("Prompts and completions length mismatch.")
-    if eval_prompts is not None and len(eval_prompts) != len(eval_target_completions):
-        raise ValueError("Eval prompts and completions length mismatch.")
+    # Evaluation logic removed; optimisation now relies only on training loss.
 
     # ---------------- Vector initialisation ------------- #
     d_model = model.config.hidden_size
@@ -141,28 +138,8 @@ def optimize_vector_simple(
     prompt_tokens, prompt_lens = tok_batch(prompts)
     target_tokens, target_lens = tok_batch(target_completions)
 
-    if eval_prompts is not None:
-        eval_prompt_tokens, eval_prompt_lens = tok_batch(eval_prompts)
-        eval_target_tokens, eval_target_lens = tok_batch(eval_target_completions)
-
-        # >>> NEW: compute & store initial evaluation loss BEFORE optimisation starts <<<
-        initial_eval_loss = compute_evaluation_loss(
-            model,
-            tokenizer,
-            vector,
-            layer,
-            eval_prompt_tokens,
-            eval_target_tokens,
-            eval_prompt_lens,
-            eval_target_lens,
-            steering_token_window,
-            projection_clamp,
-        )
-        # Initialise evaluation history with the baseline loss so plots include it
-        eval_hist = [initial_eval_loss]
-    else:
-        # No evaluation set provided
-        eval_hist = []
+    # Evaluation dataset and metrics have been removed.
+    eval_hist = []
 
     # ---------------- Optimiser & LR schedule ----------- #
     optim = torch.optim.Adam([vector], lr=lr)
@@ -267,42 +244,24 @@ def optimize_vector_simple(
             batches += 1
             loss_hist.append(loss.item())
 
-            # ---- live progress update for this minibatch ----
-            pbar.set_postfix(train=f"{loss.item():.4f}")
-
             # ---- lightweight cleanup to mitigate CUDA OOM ----
             del input_ids, attn_mask, shift_logits, shift_labels, active_logits, active_labels, out, logits
             torch.cuda.empty_cache()
 
         train_loss = running_loss / max(1, batches)
 
-        # ----- eval -----
+        # Evaluation step removed; rely solely on train_loss.
         eval_loss = None
-        if eval_prompts is not None:
-            eval_loss = compute_evaluation_loss(
-                model,
-                tokenizer,
-                vector,
-                layer,
-                eval_prompt_tokens,
-                eval_target_tokens,
-                eval_prompt_lens,
-                eval_target_lens,
-                steering_token_window,
-                projection_clamp,
-            )
-            eval_hist.append(eval_loss)
 
         # --- wandb logging ---
         if wandb_run is not None:
             wandb_run.log({
                 'train_loss': train_loss,
-                'eval_loss': eval_loss if eval_loss is not None else float('nan'),
                 'step': step,
                 'vector_norm': vector.norm().item(),
             }, step=step)
 
-        metric = eval_loss if eval_loss is not None else train_loss
+        metric = train_loss
         if metric + early_stopping_min_delta < best_loss:
             best_loss = metric
             best_vec = vector.detach().clone()
@@ -322,7 +281,7 @@ def optimize_vector_simple(
 
         current_lr = optim.param_groups[0]["lr"]
         pbar.set_description(
-            f"step {step} lr {current_lr:.2e} eval {eval_loss if eval_loss is not None else float('nan'):.4f}"
+            f"step {step} lr {current_lr:.2e} train {train_loss:.4f}"
         )
 
     pbar.close()
@@ -339,56 +298,9 @@ def optimize_vector_simple(
             final_loss=best_loss,
             norm=vector.norm().item(),
             loss_history=loss_hist if return_loss_history else None,
-            eval_loss_history=eval_hist if eval_hist else None,
         )
         return vector, info
     return vector
 
 
-# =============================================================
-# 5.  Evaluation helper (unchanged except for projection_clamp & right‑pad)
-# =============================================================
-
-def compute_evaluation_loss(
-    model,
-    tokenizer,
-    vector,
-    layer,
-    eval_prompt_tokens,
-    eval_target_tokens,
-    eval_prompt_lens,
-    eval_target_lens,
-    steering_token_window=None,
-    projection_clamp=False,
-):
-    total, count = 0.0, 0
-    with torch.no_grad():
-        for p_tok, t_tok, p_len, t_len in zip(
-            eval_prompt_tokens, eval_target_tokens, eval_prompt_lens, eval_target_lens
-        ):
-            seq = torch.cat([p_tok, t_tok])
-            L = seq.size(0)
-            input_ids = seq.unsqueeze(0).to(model.device)
-
-            start = p_len if steering_token_window is None else p_len + max(0, t_len - steering_token_window)
-            sl = slice(start, L)
-
-            hook = make_steering_hook_hf(vector, projection_clamp, sl)
-            with hf_hooks_contextmanager(model, [(layer, hook)]):
-                logits = model(input_ids=input_ids).logits[0] * 0.7
-
-            shift_logits = logits[:-1]
-            shift_labels = seq[1:].to(model.device)
-            mask = torch.zeros_like(shift_labels, dtype=torch.bool)
-            mask[start - 1 : L - 1] = True
-
-            loss = (
-                torch.nn.functional.cross_entropy(shift_logits[mask], shift_labels[mask], reduction="mean")
-                / math.log(10)
-            )
-            total += loss.item()
-            count += 1
-    model.train()
-    # Ensure any cached GPU memory is released
-    torch.cuda.empty_cache()
-    return total / count if count else float("inf")
+# Evaluation helper removed.

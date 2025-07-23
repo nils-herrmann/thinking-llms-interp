@@ -1,9 +1,4 @@
 # %%
-
-%load_ext autoreload
-%autoreload 2
-
-# %%
 import random
 import numpy as np
 import torch

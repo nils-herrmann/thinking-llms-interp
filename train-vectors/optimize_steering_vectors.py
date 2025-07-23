@@ -24,15 +24,13 @@ import wandb
 parser = argparse.ArgumentParser(description="Optimize steering vectors from annotated responses")
 parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-8B",
                     help="Model to train steering vectors for")
-parser.add_argument("--n_training_examples", type=int, default=2048,
+parser.add_argument("--n_training_examples", type=int, default=8,
                     help="Number of training examples to use per category")
-parser.add_argument("--test_examples_pct", type=float, default=1,
-                    help="Percentage of examples to use for testing (rest used for training)")
 parser.add_argument("--save_path", type=str, default="results/vars/optimized_vectors",
                     help="Path to save optimized vectors")
 parser.add_argument("--layer", type=int, default=6,
-                    help="Layer to optimize steering vector for")
-parser.add_argument("--max_iters", type=int, default=5,
+                    help="Layer to optimise the steering vector for")
+parser.add_argument("--max_iters", type=int, required=True,
                     help="Maximum optimization iterations")
 parser.add_argument("--lr", type=str, default="1e-1",
                     help="Learning rate(s) for optimization. Can be a single value or comma-separated list")
@@ -157,9 +155,13 @@ def get_label_positions(annotated_thinking, response_text, tokenizer, context_se
     
     return label_positions
 
-def extract_examples_for_category(responses_data, category_name, test_examples_pct, tokenizer, n_training_examples, model):
-    """Extract examples for a specific category from the responses data and split into training and test sets
-    Now: select by top perplexity after activation pre-filter, unless random sampling is selected.
+def extract_examples_for_category(responses_data, category_name, tokenizer, n_training_examples, model):
+    """Extract *training* examples for `category_name`.
+
+    Returns (training_examples, max_activation).
+    If `--use_activation_perplexity_selection` is off, we random-sample up to the requested
+    number; otherwise we use activation + perplexity ranking as before but without keeping a
+    separate test split.
     """
     examples_for_category = []
     
@@ -187,6 +189,11 @@ def extract_examples_for_category(responses_data, category_name, test_examples_p
                 if context[-1] not in ['.', '?', '!', ';', '\n', '\n\n'] and context[-2] not in ['.', '?', '!', ';', '\n', '\n\n'] and context.strip()[-1] not in ['.', '?', '!', ';', '\n', '\n\n']:
                     continue
                 
+                # Filter out target sequences with fewer than 3 words
+                word_count = len(text.strip().split())
+                if word_count < 10:
+                    continue
+                
                 examples_for_category.append({
                     'prompt': context,
                     'target_completion': text,
@@ -197,22 +204,14 @@ def extract_examples_for_category(responses_data, category_name, test_examples_p
     
     if not examples_for_category:
         print(f"No valid examples found for category {category_name}. Exiting.")
-        return [], [], 0.0
+        return [], 0.0
 
     print(f"Found {n_annotated_thinking_containing_category} annotated thinking containing category {category_name}")
     print(f"Found {len(examples_for_category)} examples for category {category_name}")
 
-    # Calculate how many total examples we need to get the desired number of training and test examples
-    n_test_examples = int(test_examples_pct * n_training_examples)
-    total_examples_needed = n_training_examples + n_test_examples
-
-    # Check if we have enough examples for training and test
-    if len(examples_for_category) < total_examples_needed:
-        print(f"Not enough examples found for category {category_name}. Dividing test examples by 2.")
-        n_test_examples = len(examples_for_category) // 2
-        n_training_examples = len(examples_for_category) // 2
-        total_examples_needed = n_training_examples + n_test_examples
-        print(f"New training examples: {n_training_examples}, new test examples: {n_test_examples}, new total examples needed: {total_examples_needed}")
+    # Calculate how many total examples we need to get the desired number of training and test
+    # Now: only training examples are returned.
+    total_examples_needed = n_training_examples
 
     if not args.use_activation_perplexity_selection:
         # Use random sampling over the full set
@@ -221,18 +220,15 @@ def extract_examples_for_category(responses_data, category_name, test_examples_p
         else:
             final_examples = examples_for_category.copy()
         random.shuffle(final_examples)
-        n_train = min(n_training_examples, len(final_examples))
-        n_test = min(n_test_examples, len(final_examples) - n_train)
-        training_examples = final_examples[:n_train]
-        test_examples = final_examples[n_train:n_train + n_test]
-        print(f"Final selection (random): {len(training_examples)} training examples, {len(test_examples)} test examples")
-        return training_examples, test_examples, 1.0
+        training_examples = final_examples[:total_examples_needed]
+        print(f"Final selection (random): {len(training_examples)} training examples")
+        return training_examples, 1.0
 
     # --- CORRECTED LOGIC: Activation pre-filter, then select by perplexity ---
     # 1. Sort all examples by activation (descending)
     examples_for_category_sorted = sorted(examples_for_category, key=lambda x: x['activation'], reverse=True)
     # 2. Take the top 4x the data needed
-    sample_size = min(len(examples_for_category_sorted), total_examples_needed * 4)
+    sample_size = min(len(examples_for_category_sorted), total_examples_needed * 8)
     sampled_examples = examples_for_category_sorted[:sample_size]
 
     print(f"Top {sample_size} examples by activation selected for perplexity ranking")
@@ -277,22 +273,16 @@ def extract_examples_for_category(responses_data, category_name, test_examples_p
         max_examples = min(len(examples_for_category), total_examples_needed)
         selected_examples = random.sample(examples_for_category, max_examples)
         # Split based on test percentage
-        n_test_examples = int(len(selected_examples) * test_examples_pct)
-        n_training_examples_actual = len(selected_examples) - n_test_examples
-        training_examples = selected_examples[:n_training_examples_actual]
-        test_examples = selected_examples[n_training_examples_actual:]
-        return training_examples, test_examples, 1.0
+        training_examples = selected_examples[:total_examples_needed]
+        return training_examples, 1.0
 
-    # 4. From the top N (train + test) by perplexity (descending), split into train and test sets
+    # 4. From the top N (train + test) by perplexity (descending), split into train and test
     final_examples = sorted(examples_with_metrics, key=lambda x: x['perplexity'], reverse=True)[:total_examples_needed]
 
     # 5. Split into train and test
-    n_train = min(n_training_examples, len(final_examples))
-    n_test = min(n_test_examples, len(final_examples) - n_train)
-    training_examples = final_examples[:n_train]
-    test_examples = final_examples[n_train:n_train + n_test]
+    training_examples = final_examples[:total_examples_needed]
 
-    print(f"Final selection (perplexity): {len(training_examples)} training examples, {len(test_examples)} test examples")
+    print(f"Final selection (perplexity): {len(training_examples)} training examples")
 
     # Calculate max activation before removing the field
     max_activation = max(ex['activation'] for ex in final_examples) if final_examples else 1.0
@@ -302,7 +292,7 @@ def extract_examples_for_category(responses_data, category_name, test_examples_p
         ex.pop('perplexity', None)
         ex.pop('activation', None)
 
-    return training_examples, test_examples, max_activation
+    return training_examples, max_activation
 
 def get_sorted_categories(responses_data):
     """Extract all unique categories from responses data and return them sorted alphabetically"""
@@ -320,12 +310,12 @@ def get_sorted_categories(responses_data):
     
     return sorted(list(categories))
 
-def test_on_unseen_example(model, tokenizer, vector, layer, test_example, max_new_tokens=50, steering_token_window=None):
-    """Test the optimized vector on an unseen example"""
+def test_on_example(model, tokenizer, vector, layer, test_example, max_new_tokens=50, steering_token_window=None):
+    """Test the optimized vector on an example"""
     prompt = test_example['prompt']
     target_completion = test_example['target_completion']
     
-    print("\n--- Testing on unseen example ---")
+    print("\n--- Testing on example ---")
     print(f"Prompt: ...{prompt[-100:]}")
     print("\n--- Generated Completions ---")
     
@@ -478,7 +468,7 @@ def main():
     # Initialize wandb
     wandb_run = None
     lrs_str = "-".join([str(lr) for lr in learning_rates])
-    run_name = f"{model_name_short}_layer{args.layer}_idx{args.steering_vector_idx}_lr{lrs_str}_n{args.n_training_examples}"
+    run_name = f"{model_name_short}_idx{args.steering_vector_idx}_lr{lrs_str}_n{args.n_training_examples}"
     if args.use_wandb:
         if wandb is None:
             raise ImportError("wandb is not installed. Please install it with `pip install wandb`")
@@ -491,10 +481,9 @@ def main():
 
     # Extract examples only for the target category
     print(f"Extracting examples for category {target_category}...")
-    training_examples, test_examples, max_activation = extract_examples_for_category(
+    training_examples, max_activation = extract_examples_for_category(
         valid_responses, 
         target_category, 
-        args.test_examples_pct, 
         tokenizer,
         args.n_training_examples,
         model
@@ -504,19 +493,17 @@ def main():
         print(f"No valid training examples found for category {target_category}. Exiting.")
         return
 
-    if not test_examples:
-        print(f"No valid test examples found for category {target_category}. Exiting.")
-        return
+    # Proceed even if no separate test examples are available.
         
-    print(f"Found {len(training_examples)} training examples and {len(test_examples)} test examples")
+    print(f"Found {len(training_examples)} training examples")
     
     # Extract prompts and target completions for training
     train_prompts = [ex['prompt'] for ex in training_examples]
     train_target_completions = [ex['target_completion'] for ex in training_examples]
     
-    # Extract prompts and target completions for evaluation
-    eval_prompts = [ex['prompt'] for ex in test_examples]
-    eval_target_completions = [ex['target_completion'] for ex in test_examples]
+    # Evaluation dataset removed – optimisation now relies solely on training loss.
+    eval_prompts = None
+    eval_target_completions = None
     
     # Store results for each learning rate
     all_results = {}
@@ -540,12 +527,10 @@ def main():
                 max_norm=None,
                 grad_clip=args.grad_clip,
                 early_stopping_patience=5,
-                early_stopping_min_delta=0.1,
+                early_stopping_min_delta=0.01,
                 return_info=True,
                 return_loss_history=True,
                 steering_token_window=args.steering_token_window,
-                eval_prompts=eval_prompts,
-                eval_target_completions=eval_target_completions,
                 wandb_run=wandb_run
             )
             
@@ -575,8 +560,8 @@ def main():
     
     for lr, results in all_results.items():
         for result in results:
-            # Use evaluation loss for selection if available, otherwise use training loss
-            final_loss = result['loss_info'].get('final_eval_loss', result['final_loss'])
+            # Selection based solely on training loss
+            final_loss = result['final_loss']
             if final_loss < best_loss:
                 best_loss = final_loss
                 best_lr = lr
@@ -587,8 +572,7 @@ def main():
         return
     
     print(f"\nBest learning rate: {best_lr} (final loss: {best_result['final_loss']:.4f})")
-    if 'final_eval_loss' in best_result['loss_info']:
-        print(f"Best evaluation loss: {best_result['loss_info']['final_eval_loss']:.4f}")
+    # Evaluation loss removed – only training loss is reported.
     
     # Save hyperparameters for this vector
     hyperparams = {
@@ -598,9 +582,7 @@ def main():
         "best_lr": best_lr,
         "context_sentences": args.context_sentences,
         "seed": args.seed,
-        "test_examples_pct": args.test_examples_pct,
         "n_training_examples": len(training_examples),
-        "n_test_examples": len(test_examples),
         "vector_norm": best_result['vector'].norm().item(),
         "grad_clip": args.grad_clip,
         "minibatch_size": args.minibatch_size,
@@ -613,36 +595,32 @@ def main():
         wandb_run.config.update(hyperparams, allow_val_change=True)
         wandb_run.summary['best_lr'] = best_lr
         wandb_run.summary['final_loss'] = best_result['final_loss']
-        if 'final_eval_loss' in best_result['loss_info']:
-            wandb_run.summary['final_eval_loss'] = best_result['loss_info']['final_eval_loss']
+        # Evaluation loss removed – only training loss is reported.
 
-    # Save training and evaluation losses for best learning rate in the format expected by visualization
+    # Save training losses for best learning rate in the format expected by visualization
     losses_path = f"results/vars/losses/losses_{model_name_short}_idx{args.steering_vector_idx}.pt"
     
     # Prepare loss data in the format expected by visualize_vector_losses.py
     loss_data = {
         best_lr: [{
             'train_losses': best_result['loss_info']['loss_history'],
-            'eval_losses': best_result['loss_info'].get('eval_loss_history', []),
-            'final_loss': best_result['final_loss'],
-            'final_eval_loss': best_result['loss_info'].get('final_eval_loss', best_result['final_loss'])
+            'final_loss': best_result['final_loss']
         }]
     }
     
     torch.save(loss_data, losses_path)
-    print(f"\nSaved training and evaluation losses for best learning rate {best_lr} to {losses_path}")
+    print(f"\nSaved training losses for best learning rate {best_lr} to {losses_path}")
     
-    # Test the best vector on an unseen example
-    if test_examples:
-        print(f"\nTesting {target_category} vector on an unseen example (best lr: {best_lr}):")
-        # Use a random test example
-        test_example = random.choice(test_examples)
-        test_on_unseen_example(
+    # Show steering results on a random *training* example to visualise effect
+    if training_examples:
+        print(f"\nTesting {target_category} vector on a random TRAIN example (best lr: {best_lr}):")
+        train_example = random.choice(training_examples)
+        test_on_example(
             model, 
             tokenizer, 
             best_result['vector'], 
             args.layer, 
-            test_example,
+            train_example,
             max_new_tokens=args.test_max_tokens,
             steering_token_window=args.steering_token_window
         )

@@ -1,22 +1,4 @@
 # %%
-"""
-Evaluate optimized steering vectors with an AI autograder
-========================================================
-
-This script loads the optimized steering vectors produced by
-`optimize_steering_vectors.py`, samples *unseen* examples for each target
-reasoning category (using the same activation/perplexity driven selection
-procedure), applies the steering vector to the base model, and then asks an
-LLM-based autograder to score the quality of the steered completion with
-respect to the category description that was automatically generated in
-`ablate_clustering.py`.
-
-For each category we compute the average autograder score across a user-
-configurable number of evaluation examples and write the results to
-`results/vars/steering_vector_eval_scores.json` so they can be inspected or
-visualised later.
-"""
-
 import dotenv
 dotenv.load_dotenv("../.env")
 
@@ -42,6 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # add cot-int
 import utils  # noqa: E402
 from utils import steering_opt  # noqa: E402
 from utils.utils import split_into_sentences, get_char_to_token_map, convert_numpy_types  # noqa: E402
+from utils.utils import load_steering_vectors  # noqa: E402
 from utils.clustering import run_chat_batch_with_event_loop_handling  # noqa: E402
 from utils.utils import chat_batch  # noqa: E402
 
@@ -160,11 +143,11 @@ def extract_eval_examples_for_category(
     category_name: str,
     tokenizer,
     model,
-    n_examples: int = 64,
+    n_eval_examples: int = 64,
     context_sentences: int = 0,
-    use_activation_perplexity_selection: bool = True,
+    n_training_examples: int = 8,  # Default value, will be overridden by hyperparams
 ) -> List[dict]:
-    """Return ≤ *n_examples* unseen examples for *category_name* following the
+    """Return ≤ *n_eval_examples* unseen examples for *category_name* following the
     activation→perplexity selection procedure.
     """
     # (1) gather *all* candidate examples for the category ----------------------------------
@@ -190,6 +173,11 @@ def extract_eval_examples_for_category(
             # crude check that context ends on boundary
             if context[-1] not in [".", "?", "!", ";", "\n"]:
                 continue
+
+            word_count = len(text.strip().split())
+            if word_count < 10:
+                continue
+        
             examples.append(
                 {
                     "prompt": context,
@@ -203,34 +191,43 @@ def extract_eval_examples_for_category(
     if not examples:
         return []
 
-    # (2) optional activation-filtered perplexity ranking -----------------------------------
-    if use_activation_perplexity_selection:
-        # keep top-k by activation (k = 4 * n_examples)
-        examples = sorted(examples, key=lambda x: x["activation"], reverse=True)[: n_examples * 4]
+    # (2) Sort by activation and select range after training examples ----------------------
+    examples = sorted(examples, key=lambda x: x["activation"], reverse=True)
+    start_idx = min(8 * n_training_examples, len(examples) - 4 * n_eval_examples)
+    end_idx = min(start_idx + 4 * n_eval_examples, len(examples))
+    candidate_examples = examples[start_idx:end_idx]
 
-        scored: List[Tuple[float, dict]] = []
-        for ex in examples:
-            try:
-                txt = ex["prompt"] + ex["target_completion"]
-                inputs = tokenizer(txt, return_tensors="pt")
-                with torch.no_grad():
-                    logits = model(**inputs).logits[0]
-                prompt_tok = tokenizer(ex["prompt"], return_tensors="pt")["input_ids"][0]
-                prompt_len = len(prompt_tok)
-                shift_logits = logits[:-1, :].contiguous()
-                shift_labels = inputs["input_ids"][0][1:].contiguous()
-                target_logits = shift_logits[prompt_len - 1 :]
-                target_labels = shift_labels[prompt_len - 1 :]
-                loss = torch.nn.functional.cross_entropy(target_logits, target_labels, reduction="mean")
-                perplexity = torch.exp(loss).item()
-                scored.append((perplexity, ex))
-            except Exception:
-                continue
-        # sort *descending* perplexity (harder examples first) and keep n_examples
-        scored = sorted(scored, key=lambda t: t[0], reverse=True)[:n_examples]
-        selected = [ex for _pp, ex in scored]
-    else:
-        selected = random.sample(examples, min(n_examples, len(examples)))
+    if not candidate_examples:
+        # Fallback to random sampling if we don't have enough examples
+        return random.sample(examples, min(n_eval_examples, len(examples)))
+
+    # (3) Calculate perplexity for the candidate examples --------------------------------
+    scored: List[Tuple[float, dict]] = []
+    for ex in candidate_examples:
+        try:
+            txt = ex["prompt"] + ex["target_completion"]
+            inputs = tokenizer(txt, return_tensors="pt")
+            with torch.no_grad():
+                logits = model(**inputs).logits[0]
+            prompt_tok = tokenizer(ex["prompt"], return_tensors="pt")["input_ids"][0]
+            prompt_len = len(prompt_tok)
+            shift_logits = logits[:-1, :].contiguous()
+            shift_labels = inputs["input_ids"][0][1:].contiguous()
+            target_logits = shift_logits[prompt_len - 1 :]
+            target_labels = shift_labels[prompt_len - 1 :]
+            loss = torch.nn.functional.cross_entropy(target_logits, target_labels, reduction="mean")
+            perplexity = torch.exp(loss).item()
+            scored.append((perplexity, ex))
+        except Exception:
+            continue
+
+    # Sort by perplexity (descending) and take top n_eval_examples
+    scored = sorted(scored, key=lambda t: t[0], reverse=True)[:n_eval_examples]
+    selected = [ex for _pp, ex in scored]
+
+    # Remove perplexity/activation from the final examples
+    for ex in selected:
+        ex.pop('activation', None)
 
     return selected
 
@@ -389,20 +386,20 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate steering vectors with autograder")
     parser.add_argument("--model", type=str, default="meta-llama/Llama-3.1-8B")
     parser.add_argument("--vectors_dir", type=str, default="results/vars/optimized_vectors")
-    parser.add_argument("--hyperparams_file", type=str, default="results/vars/steering_vector_hyperparams.json")
-    parser.add_argument("--n_eval_examples", type=int, default=50)
+    parser.add_argument("--hyperparams_dir", type=str, default="results/vars/hyperparams", help="Directory with per-vector hyperparameter JSON files")
+    parser.add_argument("--n_eval_examples", type=int, default=16)
     parser.add_argument("--test_max_tokens", type=int, default=80)
     parser.add_argument("--context_sentences", type=int, default=0)
-    parser.add_argument("--steering_token_window", type=int, default=50)
+    parser.add_argument("--steering_token_window", type=int, default=80)
     parser.add_argument("--load_in_8bit", action="store_true", default=False)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--autograder_model", type=str, default="gpt-4o")
-    parser.add_argument("--use_activation_perplexity_selection", action="store_true", default=False)
-    parser.add_argument("--n_runs", type=int, default=5, help="Number of independent evaluation runs (for CI)")
+    parser.add_argument("--autograder_model", type=str, default="openai/gpt-4o")
+    parser.add_argument("--n_runs", type=int, default=1, help="Number of independent evaluation runs (for CI)")
     args, _ = parser.parse_known_args()
 
-    # Aggregate results across runs
-    aggregated_scores: Dict[str, List[float]] = {}
+    # Aggregate results across runs (separate steered vs. baseline)
+    aggregated_steered_scores: Dict[str, List[float]] = {}
+    aggregated_baseline_scores: Dict[str, List[float]] = {}
 
     # perform multiple runs as requested
     for run_idx in range(args.n_runs):
@@ -429,10 +426,20 @@ def main():
         for p in base_model.parameters():
             p.requires_grad = False
 
-        # -------------------------- Load vectors & hyperparams ----------------- #
-        vectors_dir = os.path.join(os.path.dirname(__file__), args.vectors_dir)
-        with open(os.path.join(os.path.dirname(__file__), args.hyperparams_file), "r") as f:
-            all_hparams = json.load(f)
+        # ------------------------------------------------------------
+        # Load ALL steering vectors for this model using the new util
+        # ------------------------------------------------------------
+        hyperparams_dir_abs = os.path.join(os.path.dirname(__file__), args.hyperparams_dir)
+        vectors_dir_abs = os.path.join(os.path.dirname(__file__), args.vectors_dir)
+
+        vectors_map = load_steering_vectors(
+            device=base_model.device,
+            hyperparams_dir=hyperparams_dir_abs,
+            vectors_dir=vectors_dir_abs,
+            verbose=False,
+        )
+
+        all_hparams = {}
         model_short = args.model.split("/")[-1].lower()
         model_hparams = all_hparams.get(model_short, {})
 
@@ -472,23 +479,41 @@ def main():
         # -------------------------- Iterate over steering vectors -------------- #
         results = {}
         tokens_output = {}
-        for fn in os.listdir(vectors_dir):
-            if not (fn.startswith(model_short) and fn.endswith(".pt")):
+
+        hp_dir_abs = os.path.join(os.path.dirname(__file__), args.hyperparams_dir)
+
+        for hp_file in os.listdir(hp_dir_abs):
+            if not (
+                hp_file.startswith(f"steering_vector_hyperparams_{model_short}_") and hp_file.endswith(".json")
+            ):
                 continue
-            # parse idx from "..._idx{n}.pt"
+
             try:
-                idx = int(fn.split("_idx")[-1].split(".")[0])
+                idx = int(hp_file.split(f"steering_vector_hyperparams_{model_short}_")[-1].split(".")[0])
             except Exception:
                 continue
-            hp_entry = model_hparams.get(str(idx))
-            if not hp_entry:
-                print(f"[WARN] Hyperparameters for vector idx {idx} not found – skipping.")
+
+            # Load hyperparameters for this vector
+            try:
+                with open(os.path.join(hp_dir_abs, hp_file), "r") as f:
+                    hp_entry = json.load(f)
+            except Exception:
+                print(f"[WARN] Could not read {hp_file} – skipping.")
                 continue
-            category = hp_entry["category"]
-            layer = hp_entry["hyperparameters"].get("layer", 0)
-            vec_path = os.path.join(vectors_dir, fn)
-            vector_dict = torch.load(vec_path, map_location="cpu")
-            vector = next(iter(vector_dict.values()))  # stored as {category: tensor}
+
+            category = hp_entry.get("category")
+            if not category:
+                continue
+
+            # Get n_training_examples from hyperparameters
+            n_training_examples = hp_entry.get("hyperparameters", {}).get("n_training_examples", 8)
+            layer = hp_entry.get("hyperparameters", {}).get("layer", 0)
+
+            vector = vectors_map.get(category)
+            if vector is None:
+                print(f"[WARN] Vector for category '{category}' not found – skipping.")
+                continue
+
             vector = vector.to(base_model.device).to(base_model.dtype)
 
             # description
@@ -501,18 +526,21 @@ def main():
                 category,
                 tok,
                 base_model,
-                n_examples=args.n_eval_examples,
+                n_eval_examples=args.n_eval_examples,
                 context_sentences=args.context_sentences,
-                use_activation_perplexity_selection=args.use_activation_perplexity_selection,
+                n_training_examples=n_training_examples
             )
             if not eval_examples:
                 print("  -> No evaluation examples found – skipping.")
                 continue
 
-            prompts = []
+            prompts_steered = []
+            prompts_baseline = []
             eval_example_outputs = []
-            for ex in tqdm(eval_examples, desc="Generating completions"):
-                gen = generate_steered_completion(
+
+            for ex in tqdm(eval_examples, desc="Generating steered & baseline completions"):
+                # ---------------- Steered completion ----------------
+                steered_gen = generate_steered_completion(
                     base_model,
                     tok,
                     vector,
@@ -522,36 +550,65 @@ def main():
                     max_new_tokens=args.test_max_tokens,
                     steering_token_window=args.steering_token_window,
                 )
-                prompt = build_autograder_prompt(category, desc, ex["target_completion"], gen)
-                prompts.append(prompt)
 
-                # Store last 100 tokens of input, target completion, and steered completion
+                # ---------------- Baseline completion (no steering) ----------------
+                with torch.no_grad():
+                    baseline_tokens = base_model.generate(
+                        **tok(ex["prompt"], return_tensors="pt").to(base_model.device),
+                        max_new_tokens=args.test_max_tokens,
+                        pad_token_id=tok.eos_token_id,
+                    )
+                baseline_gen = tok.batch_decode(baseline_tokens, skip_special_tokens=True)[0][len(ex["prompt"]):]
+
+                # Build autograder prompts
+                prompts_steered.append(build_autograder_prompt(category, desc, ex["target_completion"], steered_gen))
+                prompts_baseline.append(build_autograder_prompt(category, desc, ex["target_completion"], baseline_gen))
+
+                # Store last 100 tokens of various strings
                 eval_example_outputs.append(
                     {
                         "input_last_tokens": get_last_tokens(ex["prompt"], tok, 100),
                         "target_last_tokens": get_last_tokens(ex["target_completion"], tok, 100),
-                        "steered_last_tokens": get_last_tokens(gen, tok, 100),
+                        "steered_last_tokens": get_last_tokens(steered_gen, tok, 100),
+                        "baseline_last_tokens": get_last_tokens(baseline_gen, tok, 100),
                     }
                 )
 
-            print("Sending prompts to autograder…")
-            responses = safe_chat_batch(prompts, args.autograder_model, max_tokens=1024)
-            scores = [parse_score(r) for r in responses]
-            valid_scores = [s for s in scores if s is not None]
-            avg = sum(valid_scores) / len(valid_scores) if valid_scores else 0.0
-            print(f"Average autograder score over {len(valid_scores)}/{len(prompts)} examples: {avg:.3f}")
+            # ---------------- Autograde steered completions ----------------
+            print("Sending steered prompts to autograder…")
+            responses_steered = safe_chat_batch(prompts_steered, args.autograder_model, max_tokens=1024)
+            scores_steered = [parse_score(r) for r in responses_steered]
+            valid_scores_steered = [s for s in scores_steered if s is not None]
+            avg_steered = sum(valid_scores_steered) / len(valid_scores_steered) if valid_scores_steered else 0.0
+            print(
+                f"Average *steered* autograder score over {len(valid_scores_steered)}/{len(prompts_steered)} examples: {avg_steered:.3f}"
+            )
+
+            # ---------------- Autograde baseline completions ----------------
+            print("Sending baseline prompts to autograder…")
+            responses_baseline = safe_chat_batch(prompts_baseline, args.autograder_model, max_tokens=1024)
+            scores_baseline = [parse_score(r) for r in responses_baseline]
+            valid_scores_baseline = [s for s in scores_baseline if s is not None]
+            avg_baseline = sum(valid_scores_baseline) / len(valid_scores_baseline) if valid_scores_baseline else 0.0
+            print(
+                f"Average *baseline* autograder score over {len(valid_scores_baseline)}/{len(prompts_baseline)} examples: {avg_baseline:.3f}"
+            )
 
             # attach scores back to the example records
-            for i, sc in enumerate(scores):
-                if i < len(eval_example_outputs):
-                    eval_example_outputs[i]["score"] = sc
+            for i in range(len(eval_example_outputs)):
+                if i < len(scores_steered):
+                    eval_example_outputs[i]["steered_score"] = scores_steered[i]
+                if i < len(scores_baseline):
+                    eval_example_outputs[i]["baseline_score"] = scores_baseline[i]
 
             results[category] = {
                 "idx": idx,
                 "layer": layer,
-                "avg_score": avg,
-                "scores": valid_scores,
-                "n_examples": len(valid_scores),
+                "avg_score_steered": avg_steered,
+                "avg_score_baseline": avg_baseline,
+                "scores_steered": valid_scores_steered,
+                "scores_baseline": valid_scores_baseline,
+                "n_examples": len(eval_examples),
             }
 
             # collect token-level data for this category
@@ -566,9 +623,10 @@ def main():
             json.dump(convert_numpy_types(results), f, indent=2)
         print(f"Saved run {run_idx + 1} scores to {run_out_path}")
 
-        # merge into aggregated list
+        # merge into aggregated lists
         for cat, det in results.items():
-            aggregated_scores.setdefault(cat, []).append(det["avg_score"])
+            aggregated_steered_scores.setdefault(cat, []).append(det["avg_score_steered"])
+            aggregated_baseline_scores.setdefault(cat, []).append(det["avg_score_baseline"])
 
         # Save last-token data only for first run (to limit size)
         if run_idx == 0:
@@ -578,29 +636,57 @@ def main():
             print(f"Saved last-token data to {tokens_path}")
 
     # -------------------------- After all runs: compute CI & plot --------- #
-    if aggregated_scores:
-        sorted_items = sorted(aggregated_scores.items(), key=lambda kv: np.mean(kv[1]), reverse=True)
-        cats = [k for k, _ in sorted_items]
-        means = [float(np.mean(v)) for _, v in sorted_items]
-        cis = [float(1.96 * np.std(v, ddof=1) / np.sqrt(len(v))) if len(v) > 1 else 0.0 for _, v in sorted_items]
+    if aggregated_steered_scores:
+        # sort categories by steered mean for consistent ordering
+        cats = sorted(aggregated_steered_scores.keys(), key=lambda k: np.mean(aggregated_steered_scores[k]), reverse=True)
 
-        # save aggregated json
+        steered_means = [float(np.mean(aggregated_steered_scores[c])) for c in cats]
+        baseline_means = [float(np.mean(aggregated_baseline_scores[c])) for c in cats]
+
+        steered_cis = [
+            float(1.96 * np.std(aggregated_steered_scores[c], ddof=1) / np.sqrt(len(aggregated_steered_scores[c])))
+            if len(aggregated_steered_scores[c]) > 1
+            else 0.0
+            for c in cats
+        ]
+        baseline_cis = [
+            float(1.96 * np.std(aggregated_baseline_scores[c], ddof=1) / np.sqrt(len(aggregated_baseline_scores[c])))
+            if len(aggregated_baseline_scores[c]) > 1
+            else 0.0
+            for c in cats
+        ]
+
+        # save aggregated json (both steered & baseline)
         agg_path = os.path.join(out_dir, "steering_vector_eval_scores_runs.json")
         with open(agg_path, "w") as f:
-            json.dump({c: {"mean": m, "ci_95": ci, "runs": aggregated_scores[c]} for c, m, ci in zip(cats, means, cis)}, f, indent=2)
+            json.dump(
+                {
+                    c: {
+                        "steered": {"mean": sm, "ci_95": sc, "runs": aggregated_steered_scores[c]},
+                        "baseline": {"mean": bm, "ci_95": bc, "runs": aggregated_baseline_scores[c]},
+                    }
+                    for c, sm, sc, bm, bc in zip(cats, steered_means, steered_cis, baseline_means, baseline_cis)
+                },
+                f,
+                indent=2,
+            )
         print(f"Saved aggregated scores to {agg_path}")
 
-        # plot with error bars
-        plt.figure(figsize=(12, 6))
-        plt.bar(cats, means, yerr=cis, capsize=5)
+        # grouped bar chart with error bars
+        x = np.arange(len(cats))
+        width = 0.35
+        plt.figure(figsize=(14, 6))
+        plt.bar(x - width / 2, baseline_means, width, yerr=baseline_cis, capsize=5, label="Baseline")
+        plt.bar(x + width / 2, steered_means, width, yerr=steered_cis, capsize=5, label="Steered")
         plt.ylabel("Average Autograder Score")
         plt.xlabel("Category")
-        plt.title(f"Steering Vector Evaluation Scores (n_runs={args.n_runs}) with 95% CI")
-        plt.xticks(rotation=45, ha='right')
+        plt.title(f"Steered vs Baseline Autograder Scores (n_runs={args.n_runs}) with 95% CI")
+        plt.xticks(x, cats, rotation=45, ha="right")
+        plt.legend()
         plt.tight_layout()
-        chart_path = os.path.join("./results/figures/steering_vector_eval_scores_CI.png")
+        chart_path = os.path.join("./results/figures/steering_vs_baseline_eval_scores_CI.png")
         plt.savefig(chart_path)
-        print(f"Saved CI bar chart to {chart_path}")
+        print(f"Saved CI grouped bar chart to {chart_path}")
 
 
 if __name__ == "__main__":

@@ -1,20 +1,18 @@
 {
-  "category": "concrete-sub-result-assertion-(chemistry-computation-step)",
+  "category": "explicit-self-uncertainty-acknowledgment",
   "hyperparameters": {
-    "layer": 6,
-    "max_iters": 20,
+    "layer": 12,
+    "max_iters": 50,
     "learning_rates": [
       0.01
     ],
     "best_lr": 0.01,
     "context_sentences": 0,
     "seed": 42,
-    "test_examples_pct": 1,
-    "n_training_examples": 851,
-    "n_test_examples": 851,
-    "vector_norm": 8.41139030456543,
+    "n_training_examples": 128,
+    "vector_norm": 15.774972915649414,
     "grad_clip": null,
-    "minibatch_size": 6,
+    "minibatch_size": 4,
     "steering_token_window": 50
   }
 }

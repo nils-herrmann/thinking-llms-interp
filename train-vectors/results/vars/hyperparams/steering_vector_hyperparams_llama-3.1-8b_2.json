@@ -1,20 +1,18 @@
 {
-  "category": "concept-clarification-&-definition",
+  "category": "consequence-drawing-(\u201cso/therefore\u201d-implication-lines)",
   "hyperparameters": {
-    "layer": 6,
-    "max_iters": 20,
+    "layer": 12,
+    "max_iters": 50,
     "learning_rates": [
       0.01
     ],
     "best_lr": 0.01,
     "context_sentences": 0,
     "seed": 42,
-    "test_examples_pct": 1,
-    "n_training_examples": 2048,
-    "n_test_examples": 2048,
-    "vector_norm": 11.535951614379883,
+    "n_training_examples": 128,
+    "vector_norm": 13.346573829650879,
     "grad_clip": null,
-    "minibatch_size": 6,
+    "minibatch_size": 4,
     "steering_token_window": 50
   }
 }

@@ -1,12 +1,15 @@
 # %%
-import sys
 import dotenv
+dotenv.load_dotenv("../.env")
+
+import sys
 import torch
 import json
 from utils.sae import load_sae
 from utils.utils import load_model
 from utils.clustering import get_latent_descriptions
-from utils.utils import chat
+from utils.utils import chat, chat_batch
+from utils.utils import load_steering_vectors as _load_all_steering_vectors
 import os
 import gc
 import colorsys
@@ -16,9 +19,7 @@ import re
 import argparse
 from collections import Counter
 from matplotlib.patches import Rectangle
-# Add parent directory to path for imports
-sys.path.append('..')
-dotenv.load_dotenv("../.env")
+
 
 from datasets import load_dataset
 
@@ -30,29 +31,21 @@ def parse_args():
                       help='Model for thinking/perplexity')
     parser.add_argument('--base_model', type=str, default='meta-llama/Llama-3.1-8B',
                       help='Model for base generation')
-    parser.add_argument('--steering_layer', type=int, default=14,
+    parser.add_argument('--steering_layer', type=int, default=12,
                       help='Layer to extract from thinking model')
     parser.add_argument('--sae_layer', type=int, default=6,
                       help='Layer to extract from SAE')
-    parser.add_argument('--n_clusters', type=int, default=30,
+    parser.add_argument('--n_clusters', type=int, default=15,
                       help='Number of clusters for SAE')
-    parser.add_argument('--use_perplexity_selection', action='store_true', default=False,
-                      help='Use perplexity-based selection between steered and unsteered generation')
     parser.add_argument('--n_tasks', type=int, default=500,
                       help='Number of tasks to evaluate')
-    parser.add_argument('--max_new_tokens', type=int, default=500,
+    parser.add_argument('--max_new_tokens', type=int, default=1500,
                       help='Maximum number of tokens to generate')
-    parser.add_argument('--eval_start_idx', type=int, default=0,
+    parser.add_argument('--eval_start_idx', type=int, default=50,
                       help='Starting index in the dataset')
-    parser.add_argument('--cold_start_tokens', type=int, default=1,
-                      help='Number of initial tokens to use from thinking model')
-    parser.add_argument('--temperature', type=float, default=0.7,
+    parser.add_argument('--temperature', type=float, default=0.0,
                       help='Temperature for sampling')
-    parser.add_argument('--repetition_penalty', type=float, default=1.0,
-                      help='Repetition penalty (1.0 means no penalty, >1.0 discourages repetition)')
-    parser.add_argument('--repetition_window', type=int, default=0,
-                      help='Window size for repetition detection')
-    parser.add_argument('--coefficient', type=float, default=1,
+    parser.add_argument('--coefficient', type=float, default=0.5,
                       help='Steering coefficient')
     parser.add_argument('--results_dir', type=str, default='results',
                       help='Directory to save results')
@@ -60,22 +53,8 @@ def parse_args():
                       help='Index of example to run')
     return parser.parse_known_args()[0]
 
-def get_next_token(logits, temperature, model, input_ids=None, repetition_penalty=1.0, repetition_window=128):
-    """Get next token from logits using temperature sampling or greedy decoding"""
-    # Apply repetition penalty if enabled and input_ids are provided
-    if repetition_penalty > 1.0 and input_ids is not None:
-        # Only consider tokens in the recent window
-        window_start = max(0, input_ids.shape[1] - repetition_window)
-        recent_tokens = input_ids[0, window_start:].tolist()
-        
-        # Get unique tokens in the recent window
-        unique_tokens = set(recent_tokens)
-        
-        # Apply penalty to those tokens
-        for token in unique_tokens:
-            if token < logits.shape[-1]:  # Ensure token is within vocabulary
-                logits[token] /= repetition_penalty
-    
+def get_next_token(logits, temperature, model, input_ids=None):
+    """Get next token from logits using temperature sampling or greedy decoding (repetition penalty removed)"""
     if temperature > 0:
         logits = logits / temperature
         probs = torch.softmax(logits, dim=-1)
@@ -83,9 +62,9 @@ def get_next_token(logits, temperature, model, input_ids=None, repetition_penalt
     else:
         return torch.argmax(logits).item()
 
-def get_token_and_string(logits, temperature, tokenizer, input_ids=None, repetition_penalty=1.0, repetition_window=128):
+def get_token_and_string(logits, temperature, tokenizer, input_ids=None):
     """Get token ID and string from logits"""
-    token = get_next_token(logits, temperature, tokenizer, input_ids, repetition_penalty, repetition_window)
+    token = get_next_token(logits, temperature, tokenizer, input_ids)
     token_string = tokenizer.decode(token)
     return token, token_string
 
@@ -125,10 +104,7 @@ def hybrid_generate_sentence(
     *,
     coefficient: float = 1.0,
     temperature: float = 1.0,
-    repetition_penalty: float = 1.0,
-    repetition_window: int = 128,
     verbose: bool = False,
-    use_perplexity_selection: bool = True,
 ):
     """Sentence-level variant of `hybrid_generate`.
 
@@ -144,6 +120,8 @@ def hybrid_generate_sentence(
     # Clone inputs so we do not modify the originals in-place
     base_output_ids = base_input_ids.clone()
     thinking_output_ids = thinking_input_ids.clone()
+    del base_input_ids, thinking_input_ids  # Free original tensors
+    torch.cuda.empty_cache()
 
     token_latent_info = []
     per_token_perplexity = []
@@ -159,6 +137,14 @@ def hybrid_generate_sentence(
         sentence_activations = []
         sentence_tokens_strings = []
 
+        with torch.no_grad():
+            with thinking_model.trace(thinking_output_ids) as tracer:
+                act = thinking_model.model.layers[sae_layer].output[0][0, -1, :].save()
+
+        sentence_activations.append(act.detach().clone())  # Clone to avoid reference issues
+        del act
+        torch.cuda.empty_cache()
+
         while True:
             with torch.no_grad():
                 with thinking_model.trace(thinking_output_ids) as tracer:
@@ -170,16 +156,23 @@ def hybrid_generate_sentence(
                 temperature,
                 thinking_model,
                 thinking_output_ids,
-                repetition_penalty,
-                repetition_window,
             )
+            del current_logits
+            torch.cuda.empty_cache()
+
             next_tok_str = thinking_model.tokenizer.decode(next_tok)
             next_tok_ids = thinking_model.tokenizer.encode(
                 next_tok_str, return_tensors="pt", add_special_tokens=False
             ).to(thinking_model.device).to(torch.long)
 
+            if is_sentence_end(next_tok_str) or next_tok == thinking_model.tokenizer.eos_token_id:
+                del next_tok_ids
+                torch.cuda.empty_cache()
+                break
+
             # Append to running sequence
             thinking_output_ids = torch.cat([thinking_output_ids, next_tok_ids], dim=1)
+            del next_tok_ids
             sentence_tokens_strings.append(next_tok_str)
 
             # Get hidden activation for the _new_ token
@@ -187,10 +180,9 @@ def hybrid_generate_sentence(
                 with thinking_model.trace(thinking_output_ids) as tracer:
                     act = thinking_model.model.layers[sae_layer].output[0][0, -1, :].save()
 
-            sentence_activations.append(act)
-
-            if is_sentence_end(next_tok_str) or next_tok == thinking_model.tokenizer.eos_token_id:
-                break
+            sentence_activations.append(act.detach().clone())
+            del act
+            torch.cuda.empty_cache()
 
             if generated_tokens + len(sentence_tokens_strings) >= max_new_tokens:
                 break
@@ -199,44 +191,55 @@ def hybrid_generate_sentence(
             break  # Safety guard
 
         # Average activations across the sentence
-        stacked_acts = torch.stack(sentence_activations)
+        stacked_acts = torch.stack(sentence_activations, dim=0)
         avg_activation = torch.mean(stacked_acts, dim=0)
+        del stacked_acts, sentence_activations
+        torch.cuda.empty_cache()
 
         latent_acts = sae.encoder(avg_activation.to(torch.float32) - sae.b_dec)
+        del avg_activation
+        torch.cuda.empty_cache()
+
         latent_id = torch.argmax(latent_acts).item()
         latent_title = latent_descriptions[latent_id]["title"]
+        latent_key = latent_descriptions[latent_id]["key"]
         activation_value = latent_acts[latent_id].item()
-        latent_key = latent_title.lower().replace(" ", "-")
         steering_vector = steering_vectors[latent_key]
+        del latent_acts
+        torch.cuda.empty_cache()
 
         if verbose:
             print(f"Thinking sentence: {''.join(sentence_tokens_strings)}")
             print(f"Detected latent: {latent_title} (value={activation_value:.3f})")
 
         # ----------------------------------------------------------------------------------
-        # (2) BASE MODEL — generate one full sentence with the steering vector
+        # (2) BASE MODEL — always generate the next sentence with the steering vector
         # ----------------------------------------------------------------------------------
         while generated_tokens < max_new_tokens:
+            # 1) Compute logits with steering applied to recent hidden states
             with torch.no_grad():
                 with base_model.trace(base_output_ids) as tracer:
-                    base_model.model.layers[steering_layer].input[:, base_output_ids.shape[1] - 50:, :] += coefficient * steering_vector
-                    logits_steered = base_model.lm_head.output.save()
+                    base_model.model.layers[steering_layer].output[0][:, base_output_ids.shape[1] - 50:, :] += coefficient * steering_vector
+                    logits_next = base_model.lm_head.output.save()
 
-            steered_tok, steered_str = get_token_and_string(
-                logits_steered[0, -1],
+            # 2) Select next token
+            next_tok, next_tok_str = get_token_and_string(
+                logits_next[0, -1],
                 temperature,
                 base_tokenizer,
                 base_output_ids,
-                repetition_penalty,
-                repetition_window,
             )
+            del logits_next
+            torch.cuda.empty_cache()
 
-            next_tok = steered_tok
-            next_tok_str = steered_str
+            # 3) Compute perplexity of chosen token (for analysis only)
             with torch.no_grad():
                 with thinking_model.trace(thinking_output_ids) as tracer:
                     logits_thinking_curr = thinking_model.lm_head.output.save()
+
             token_perpl = get_perplexity(next_tok_str, logits_thinking_curr, thinking_model)
+            del logits_thinking_curr
+            torch.cuda.empty_cache()
             chosen = "steered"
 
             # Append chosen token to both sequences
@@ -249,6 +252,8 @@ def hybrid_generate_sentence(
 
             base_output_ids = torch.cat([base_output_ids, base_tok_ids], dim=1)
             thinking_output_ids = torch.cat([thinking_output_ids, thinking_tok_ids], dim=1)
+            del base_tok_ids, thinking_tok_ids
+            torch.cuda.empty_cache()
 
             # Book-keeping
             steering_selection.append(chosen)
@@ -275,7 +280,11 @@ def hybrid_generate_sentence(
         if generated_tokens >= max_new_tokens or (next_tok == base_tokenizer.eos_token_id):
             break
 
+    # Final cleanup
+    del steering_vector
     gc.collect()
+    torch.cuda.empty_cache()
+
     return (
         base_output_ids,
         token_latent_info,
@@ -284,53 +293,29 @@ def hybrid_generate_sentence(
         steering_selection,
     )
 
-def load_steering_vectors(model_id, thinking_model_id, steering_layer, n_clusters):
+def load_steering_vectors(model_id, thinking_model_id, sae_layer, n_clusters):
     """Load steering vectors from train_vectors output"""
-    vectors_dir = "../train-vectors/results/vars/optimized_vectors"
-    if not os.path.exists(vectors_dir):
-        return {}
-    
-    # Get latent descriptions to map indices to titles
-    descriptions = get_latent_descriptions(thinking_model_id, steering_layer, n_clusters)
-    
-    # Load all steering vector files
+    # Use the shared utility to fetch {category: vector} mapping
+    hyperparams_dir_abs = os.path.join(os.path.dirname(__file__), "../train-vectors/results/vars/hyperparams")
+    vectors_dir_abs = os.path.join(os.path.dirname(__file__), "../train-vectors/results/vars/optimized_vectors")
+
+    all_vectors = _load_all_steering_vectors(
+        hyperparams_dir=hyperparams_dir_abs,
+        vectors_dir=vectors_dir_abs,
+        verbose=False,
+    )
+
+    # Build mapping from SAE latent titles -> vectors (matched by slugified title)
+    descriptions = get_latent_descriptions(thinking_model_id, sae_layer, n_clusters)
     steering_vectors = {}
-    for filename in os.listdir(vectors_dir):
-        if filename.startswith(f"{model_id}_idx") and filename.endswith(".pt"):
-            # Extract the index from filename
-            match = re.search(rf"{re.escape(model_id)}_idx(\d+)\.pt", filename)
-            if match:
-                idx = int(match.group(1))
-                if idx in descriptions:
-                    # Load the steering vector
-                    vector_path = os.path.join(vectors_dir, filename)
-                    vector_obj = torch.load(vector_path)
+    for idx, desc in descriptions.items():
+        latent_title = desc.get("key", "")
+        if not latent_title:
+            continue
+        key = latent_title.lower().replace(" ", "-")
+        if key in all_vectors:
+            steering_vectors[key] = all_vectors[key]
 
-                    # Some checkpoints store additional metadata around the actual tensor
-                    # Handle common formats so that we always keep **only** the tensor in the
-                    # steering_vectors dictionary.
-                    if isinstance(vector_obj, dict):
-                        if len(vector_obj) == 1 and all(torch.is_tensor(v) for v in vector_obj.values()):
-                            vector_tensor = next(iter(vector_obj.values()))
-                        elif "steering_vector" in vector_obj:
-                            vector_tensor = vector_obj["steering_vector"]
-                        elif "vector" in vector_obj:
-                            vector_tensor = vector_obj["vector"]
-                        else:
-                            # Fallback – try the first tensor-like value we can find
-                            tensor_candidates = [v for v in vector_obj.values() if torch.is_tensor(v)]
-                            if tensor_candidates:
-                                vector_tensor = tensor_candidates[0]
-                            else:
-                                raise ValueError(f"No tensor found in steering vector checkpoint {vector_path}")
-                    else:
-                        vector_tensor = vector_obj  # already a tensor
-
-                    # Get the latent title and format it as expected
-                    latent_title = descriptions[idx]["title"]
-                    key = latent_title.lower().replace(" ", "-")
-                    steering_vectors[key] = vector_tensor
-    
     return steering_vectors
 
 def generate_latent_colors(latent_descriptions):
@@ -437,7 +422,7 @@ def load_models_and_sae(args):
 
     print(f"Loading steering vectors and layer effects...")
     descriptions = get_latent_descriptions(thinking_model_id, args.sae_layer, args.n_clusters)
-    steering_vectors = load_steering_vectors(base_model_id, thinking_model_id, args.steering_layer, args.n_clusters)
+    steering_vectors = load_steering_vectors(base_model_id, thinking_model_id, args.sae_layer, args.n_clusters)
 
     return thinking_model, thinking_tokenizer, base_model, base_tokenizer, sae, steering_vectors, descriptions, thinking_model_id, base_model_id
 
@@ -489,20 +474,10 @@ def run_example(thinking_model, thinking_tokenizer, base_model, base_tokenizer,
     thinking_response = thinking_tokenizer.decode(thinking_outputs[0][len(thinking_input_ids[0]):], skip_special_tokens=True)
     print(thinking_response)
     
-    # Extract cold start tokens
-    thinking_first_tokens = thinking_tokenizer.encode(thinking_response[:100], add_special_tokens=False)[:args.cold_start_tokens]
-    cold_start_text = thinking_tokenizer.decode(thinking_first_tokens)
-    print(f"\nUsing first {args.cold_start_tokens} tokens as cold start: '{cold_start_text}'")
-    
-    # Add cold start tokens to base input
-    cold_start_base_tokens = base_tokenizer.encode(cold_start_text, add_special_tokens=False, return_tensors="pt").to(base_model.device).to(torch.long)
-    base_input_with_cold_start = torch.cat([base_input_ids, cold_start_base_tokens], dim=1)
-    
-    # Add cold start tokens to thinking input for hybrid generation
-    thinking_input_with_cold_start = torch.cat([
-        thinking_input_ids, 
-        thinking_tokenizer.encode(cold_start_text, add_special_tokens=False, return_tensors="pt").to(thinking_model.device).to(torch.long)
-    ], dim=1)
+    # Cold start functionality removed – use empty prefix
+    cold_start_text = ""
+    base_input_with_cold_start = base_input_ids
+    thinking_input_with_cold_start = thinking_input_ids
     
     # Generate with base model
     print("\n===== Generating with Base Model =====")
@@ -527,9 +502,6 @@ def run_example(thinking_model, thinking_tokenizer, base_model, base_tokenizer,
         latent_descriptions=descriptions,
         temperature=args.temperature,
         coefficient=args.coefficient,
-        repetition_penalty=args.repetition_penalty,
-        repetition_window=args.repetition_window,
-        use_perplexity_selection=args.use_perplexity_selection,
         verbose=False
     )
     hybrid_response = f"{cold_start_text}{base_tokenizer.decode(hybrid_output_ids[0][len(base_input_with_cold_start[0]):], skip_special_tokens=True)}"
@@ -548,7 +520,48 @@ def run_example(thinking_model, thinking_tokenizer, base_model, base_tokenizer,
 def clean_answer(text):
     return re.sub(r'\s+', ' ', text).strip()
 
+def safe_chat_batch(prompts, model_name: str = "gpt-4o", max_tokens: int = 1024, **kwargs):
+    """Synchronous wrapper around utils.utils.chat_batch with smaller max_tokens.
+
+    Parameters
+    ----------
+    prompts : list[str]
+        List of prompt strings to send to the chat model.
+    model_name : str, default "gpt-4o"
+        Identifier of the model to use (e.g. "gpt-4o", "gpt-4.1").
+    max_tokens : int, default 1024
+        Maximum tokens per completion.
+    kwargs : dict
+        Additional keyword arguments forwarded to `chat_batch`.
+    """
+    import asyncio
+    import concurrent.futures
+
+    async def _run():
+        return await chat_batch(
+            prompts,
+            model=model_name,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
+
+    try:
+        # Try to get existing event loop (e.g. in Jupyter)
+        loop = asyncio.get_running_loop()
+
+        def _thread_runner():
+            return asyncio.run(_run())
+
+        # Run the async function in a thread to avoid "already running loop" errors
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+            fut = ex.submit(_thread_runner)
+            return fut.result()
+    except RuntimeError:
+        # No running event loop – safe to run directly.
+        return asyncio.run(_run())
+
 def evaluate_answer(model_answer, correct_answer, question, model_name):
+    """Evaluate whether the model's answer is correct using GPT-4."""
     prompt = f"""Please evaluate whether the following answer to a math problem is correct.
 
 Question: {question}
@@ -562,7 +575,8 @@ Then determine if the model's final numerical answer is equivalent to the correc
 Just answer YES if the model's answer is correct, or NO if it's incorrect. Nothing else.
 """
     
-    response = chat(prompt, model="gpt-4.1", max_tokens=100)
+    response_list = safe_chat_batch([prompt], model_name="openai/gpt-4o", max_tokens=100)
+    response = response_list[0] if isinstance(response_list, (list, tuple)) else response_list
     is_correct = "yes" in response.lower()
     print(f"{model_name} evaluated as: {response}")
     return is_correct
@@ -601,9 +615,8 @@ def save_detailed_results(results, args, thinking_model_id, base_model_id):
     # Create results directory if it doesn't exist
     os.makedirs(f"{args.results_dir}/detailed", exist_ok=True)
     
-    # Format filename (lookahead flag removed)
-    perplexity_str = "" if args.use_perplexity_selection else "_no_perplexity"
-    filename = f"{args.results_dir}/detailed/hybrid_stats_{base_model_id}_{args.dataset}{perplexity_str}.json"
+    # Format filename
+    filename = f"{args.results_dir}/detailed/hybrid_stats_{base_model_id}_{args.dataset}.json"
     
     # Calculate average steering statistics
     avg_steering_stats = {
@@ -620,7 +633,6 @@ def save_detailed_results(results, args, thinking_model_id, base_model_id):
             "base_model": args.base_model,
             "thinking_model": args.thinking_model,
             "dataset": args.dataset,
-            "use_perplexity_selection": args.use_perplexity_selection,
             "temperature": args.temperature,
             "coefficient": args.coefficient,
             "n_tasks": len(results["questions"])
@@ -699,6 +711,7 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             correct_answer = item["answer"]
         
         print(f"Question: {question[:100]}...")
+        print(f"Correct answer: {correct_answer}")
         results["questions"].append(question)
         results["correct_answers"].append(correct_answer)
         
@@ -723,19 +736,10 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
         results["thinking_answers"].append(thinking_response)
         results["thinking_lengths"].append(len(thinking_response.split()))
         
-        # Extract cold start tokens from thinking response
-        thinking_first_tokens = thinking_tokenizer.encode(thinking_response[:100], add_special_tokens=False)[:args.cold_start_tokens]
-        cold_start_text = thinking_tokenizer.decode(thinking_first_tokens)
-        
-        # Add cold start tokens to base input
-        cold_start_base_tokens = base_tokenizer.encode(cold_start_text, add_special_tokens=False, return_tensors="pt").to(base_model.device).to(torch.long)
-        base_input_with_cold_start = torch.cat([base_input_ids, cold_start_base_tokens], dim=1)
-        
-        # Add cold start tokens to thinking input for hybrid generation
-        thinking_input_with_cold_start = torch.cat([
-            thinking_input_ids, 
-            thinking_tokenizer.encode(cold_start_text, add_special_tokens=False, return_tensors="pt").to(thinking_model.device).to(torch.long)
-        ], dim=1)
+        # Cold start functionality removed
+        cold_start_text = ""
+        base_input_with_cold_start = base_input_ids
+        thinking_input_with_cold_start = thinking_input_ids
         
         # Generate with base model
         print("Generating with Base Model...")
@@ -761,9 +765,6 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             latent_descriptions=descriptions,
             temperature=args.temperature,
             coefficient=args.coefficient,
-            repetition_penalty=args.repetition_penalty,
-            repetition_window=args.repetition_window,
-            use_perplexity_selection=args.use_perplexity_selection,
             verbose=False
         )
         hybrid_response = f"{cold_start_text}{base_tokenizer.decode(hybrid_output_ids[0][len(base_input_with_cold_start[0]):], skip_special_tokens=True)}"
@@ -844,7 +845,6 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             "base_model": args.base_model,
             "thinking_model": args.thinking_model,
             "n_tasks": task_counter,
-            "cold_start_tokens": args.cold_start_tokens,
         },
         "results": {
             "accuracy": {
@@ -875,8 +875,7 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
         benchmark_data["tasks"].append(task_data)
 
     # Save to JSON file
-    use_perplexity_selection_str = "" if args.use_perplexity_selection else "_no_perplexity_selection"
-    json_path = f"{args.results_dir}/benchmark_results_{base_model_id}_{args.dataset}{use_perplexity_selection_str}.json"
+    json_path = f"{args.results_dir}/benchmark_results_{base_model_id}_{args.dataset}.json"
     with open(json_path, 'w') as f:
         json.dump(benchmark_data, f, indent=2)
 
@@ -948,5 +947,3 @@ print("Evaluation complete. Cleaning up...")
 del thinking_model, base_model, sae
 torch.cuda.empty_cache()
 gc.collect()
-
-# %%
