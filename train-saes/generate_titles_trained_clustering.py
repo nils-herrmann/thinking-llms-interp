@@ -3,12 +3,11 @@
 import argparse
 import json
 import os
-import sys
-import time
 from utils.utils import print_and_flush, check_batch_status
 from utils.clustering import (
     load_trained_clustering_data, predict_clusters, 
-    generate_representative_examples, save_clustering_results
+    generate_representative_examples,
+    generate_cluster_descriptions
 )
 from utils.clustering_batched import (
     generate_cluster_descriptions_batch, process_cluster_descriptions_batch
@@ -36,8 +35,8 @@ parser.add_argument("--description_examples", type=int, default=200,
                     help="Number of examples to use for generating cluster descriptions")
 parser.add_argument("--evaluator_model", type=str, default="gpt-4o",
                     help="Model to use for generating descriptions")
-parser.add_argument("--command", type=str, choices=["submit", "process"], required=True,
-                    help="Command to run: submit batch jobs or process results")
+parser.add_argument("--command", type=str, choices=["submit", "process", "direct"], required=True,
+                    help="Command to run: submit batch jobs, process results, or generate directly")
 parser.add_argument("--batch_file", type=str, default=None,
                     help="JSON file containing batch information (for process command)")
 parser.add_argument("--check_status", action="store_true", default=False,
@@ -318,11 +317,171 @@ def process_description_batches():
     print_and_flush("All batch results processed successfully!")
 
 
+def generate_descriptions_direct():
+    """Generate cluster descriptions directly without using batch API."""
+    print_and_flush("=== GENERATING CLUSTER DESCRIPTIONS DIRECTLY ===")
+    
+    # Get model identifier for file naming
+    model_id = args.model.split('/')[-1].lower()
+    
+    # Load model and process activations
+    print_and_flush("Loading model and processing activations...")
+    model, tokenizer = utils.load_model(
+        model_name=args.model,
+        load_in_8bit=args.load_in_8bit
+    )
+
+    # Process saved responses
+    all_activations, all_texts, overall_mean = utils.process_saved_responses(
+        args.model, 
+        args.n_examples,
+        model,
+        tokenizer,
+        args.layer
+    )
+
+    del model, tokenizer
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    # Center activations
+    all_activations = [x - overall_mean for x in all_activations]
+    all_activations = np.stack([a.reshape(-1) for a in all_activations])
+    norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
+    all_activations = all_activations / norms
+    
+    # Process each clustering method
+    for method in args.clustering_methods:
+        print_and_flush(f"\n=== Processing {method.upper()} ===")
+        
+        # Load existing results to get cluster sizes
+        results_json_path = f'results/vars/{method}_results_{model_id}_layer{args.layer}.json'
+        if not os.path.exists(results_json_path):
+            print_and_flush(f"No existing results found for {method} at {results_json_path}. Skipping.")
+            continue
+            
+        with open(results_json_path, 'r') as f:
+            existing_results = json.load(f)
+        
+        cluster_sizes = list(existing_results.get("results_by_cluster_size", {}).keys())
+        if not cluster_sizes:
+            print_and_flush(f"No clustering results found for {method}. Skipping.")
+            continue
+        
+        # Process each cluster size
+        for cluster_size in cluster_sizes:
+            n_clusters = int(cluster_size)
+            print_and_flush(f"Generating descriptions for {method} with {n_clusters} clusters...")
+            
+            try:
+                # Load the trained clustering model
+                clustering_data = load_trained_clustering_data(model_id, args.layer, n_clusters, method)
+                cluster_centers = clustering_data['cluster_centers']
+                
+                # Predict cluster labels for current activations
+                cluster_labels = predict_clusters(all_activations, clustering_data)
+                
+                # Generate representative examples
+                representative_examples = generate_representative_examples(
+                    cluster_centers, all_texts, cluster_labels, all_activations, 
+                    clustering_data=clustering_data, model_id=model_id, layer=args.layer, n_clusters=n_clusters
+                )
+                
+                # Prepare examples for description generation
+                cluster_examples_list = []
+                for cluster_idx in range(n_clusters):
+                    if len(representative_examples[cluster_idx]) == 0:
+                        print_and_flush(f"WARNING: Skipping empty cluster {cluster_idx}")
+                        continue
+                    
+                    # Sample examples from across the cluster for diversity
+                    cluster_examples = representative_examples[cluster_idx]
+                    total_examples = len(cluster_examples)
+                    
+                    if total_examples <= args.description_examples:
+                        examples = cluster_examples
+                    else:
+                        # Sample from different deciles
+                        examples = []
+                        examples_per_decile = args.description_examples // 10
+                        remainder = args.description_examples % 10
+                        
+                        for decile in range(10):
+                            start_idx = (decile * total_examples) // 10
+                            end_idx = ((decile + 1) * total_examples) // 10
+                            
+                            decile_examples = cluster_examples[start_idx:end_idx]
+                            
+                            num_to_sample = examples_per_decile
+                            if decile < remainder:
+                                num_to_sample += 1
+                                
+                            examples.extend(decile_examples[:num_to_sample])
+                    
+                    # Shuffle examples for diversity
+                    import random
+                    random.shuffle(examples)
+                    cluster_examples_list.append((cluster_idx, examples))
+                
+                # Generate descriptions for multiple repetitions
+                all_categories = []
+                
+                for rep_idx in range(args.repetitions):
+                    print_and_flush(f"  Generating repetition {rep_idx + 1}/{args.repetitions}...")
+                    
+                    # Generate cluster descriptions directly
+                    categories = generate_cluster_descriptions(
+                        args.model, 
+                        cluster_examples_list, 
+                        args.evaluator_model,
+                        n_trace_examples=0,
+                        n_categories_examples=3
+                    )
+                    
+                    print_and_flush(f"  Generated descriptions for {len(categories)} clusters:")
+                    for cluster_id, title, description in categories:
+                        print_and_flush(f"    Cluster {cluster_id}: {title}")
+                        print_and_flush(f"      {description}")
+                    
+                    all_categories.append(categories)
+                    print_and_flush(f"  Successfully completed repetition {rep_idx + 1}")
+                
+                # Update existing results with category information
+                if all_categories and "results_by_cluster_size" in existing_results:
+                    cluster_results = existing_results["results_by_cluster_size"].get(cluster_size, {})
+                    
+                    # Create all_results structure with generated categories
+                    if len(all_categories) > 0:
+                        cluster_results["all_results"] = []
+                        for rep_idx, categories in enumerate(all_categories):
+                            cluster_results["all_results"].append({"categories": categories})
+                        
+                        existing_results["results_by_cluster_size"][cluster_size] = cluster_results
+                        print_and_flush(f"Updated results with {len(all_categories)} different category sets for {n_clusters} clusters")
+                    else:
+                        print_and_flush(f"No valid categories generated for {cluster_size} clusters")
+                
+                print_and_flush(f"Completed processing for {cluster_size} clusters")
+                
+            except Exception as e:
+                print_and_flush(f"Error processing {method} with {n_clusters} clusters: {e}")
+                continue
+        
+        # Save updated results
+        with open(results_json_path, 'w') as f:
+            json.dump(existing_results, f, indent=2)
+        print_and_flush(f"Updated results saved to {results_json_path}")
+    
+    print_and_flush("All cluster descriptions generated successfully!")
+
+
 def main():
     if args.command == "submit":
         submit_description_batches()
     elif args.command == "process":
         process_description_batches()
+    elif args.command == "direct":
+        generate_descriptions_direct()
 
 
 if __name__ == "__main__":
