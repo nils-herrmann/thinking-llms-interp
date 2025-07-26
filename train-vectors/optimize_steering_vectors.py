@@ -52,7 +52,7 @@ parser.add_argument("--steering_vector_idx", type=int, default=0,
                     help="Index of the specific steering vector to optimize")
 parser.add_argument("--grad_clip", type=float, default=None,
                     help="Maximum L2 norm of gradients for gradient clipping. None means no clipping.")
-parser.add_argument("--steering_token_window", type=int, default=50,
+parser.add_argument("--steering_token_window", type=int, default=None,
                     help="Number of previous tokens in the target completion to apply the steering vector to (None means all)")
 parser.add_argument("--use_wandb", action="store_true", default=False,
                     help="Use wandb for logging")
@@ -294,6 +294,97 @@ def extract_examples_for_category(responses_data, category_name, tokenizer, n_tr
 
     return training_examples, max_activation
 
+def generate_bias_examples(responses_data, tokenizer, model, n_training_examples):
+    """Generate examples for the *bias* vector.
+    Each example uses the *entire* thinking process as the target completion, with the task + question
+    (everything *before* the reasoning) as the prompt.
+
+    Selection logic mirrors `extract_examples_for_category` except that we have no activation scores,
+    so we optionally rank purely by perplexity.
+    """
+    all_examples = []
+
+    for resp in tqdm(responses_data, desc="Preparing bias examples"):
+        if not resp.get('thinking_process'):
+            continue
+
+        # Build prompt exactly as in other parts of the script
+        prompt = (
+            f"Task: Answer the question below. Explain your reasoning step by step.\n\n\n\nQuestion:\n{resp['original_message']['content']}\n\nStep by step answer:\n"
+        )
+        target_completion = resp['thinking_process'].strip()
+
+        # Simple quality filter – skip very short reasoning chains
+        if len(target_completion.split()) < 20:
+            continue
+
+        all_examples.append({
+            'prompt': prompt,
+            'target_completion': target_completion,
+            'original_question': resp['original_message']['content'],
+        })
+
+    if not all_examples:
+        print("No valid bias examples found. Exiting.")
+        return []
+
+    print(f"Collected {len(all_examples)} candidate bias examples")
+
+    total_examples_needed = n_training_examples
+
+    # If the user disabled perplexity selection, just random-sample
+    if not args.use_activation_perplexity_selection:
+        if len(all_examples) > total_examples_needed:
+            selected = random.sample(all_examples, total_examples_needed)
+        else:
+            selected = all_examples.copy()
+        random.shuffle(selected)
+        print(f"Selected {len(selected)} random training examples (no perplexity ranking)")
+        return selected
+
+    # Otherwise: random pre-sample 2×, then rank by perplexity
+    sample_size = min(len(all_examples), total_examples_needed * 2)
+    presampled = random.sample(all_examples, sample_size)
+
+    print(f"Presampled {sample_size} examples for perplexity ranking; computing perplexities…")
+    examples_with_metrics = []
+
+    for ex in tqdm(presampled, desc="Computing perplexity"):
+        try:
+            full_txt = ex['prompt'] + ex['target_completion']
+            inputs = tokenizer(full_txt, return_tensors='pt')
+            with torch.no_grad():
+                outputs = model(**inputs.to(model.device))
+                logits = outputs.logits[0]
+                prompt_len = len(tokenizer(ex['prompt'], return_tensors='pt')['input_ids'][0])
+                shift_logits = logits[:-1, :].contiguous()
+                shift_labels = inputs['input_ids'][0][1:].contiguous()
+                tgt_start = prompt_len - 1
+                tgt_end = len(shift_labels)
+                if tgt_start >= tgt_end or tgt_start < 0:
+                    continue
+                tgt_logits = shift_logits[tgt_start:tgt_end, :]
+                tgt_labels = shift_labels[tgt_start:tgt_end]
+                if tgt_logits.size(0) == 0:
+                    continue
+                loss = torch.nn.functional.cross_entropy(tgt_logits, tgt_labels, reduction='mean')
+                ppl = torch.exp(loss).item()
+                examples_with_metrics.append({**ex, 'perplexity': ppl})
+        except Exception as e:
+            print(f"Error computing perplexity: {e}")
+            continue
+
+    if not examples_with_metrics:
+        print("Perplexity computation failed for all examples; falling back to random selection.")
+        return random.sample(all_examples, total_examples_needed)
+
+    # Sort by perplexity descending and take top N
+    final_examples = sorted(examples_with_metrics, key=lambda x: x['perplexity'], reverse=True)[:total_examples_needed]
+    for ex in final_examples:
+        ex.pop('perplexity', None)
+    print(f"Selected {len(final_examples)} training examples after perplexity ranking")
+    return final_examples
+
 def get_sorted_categories(responses_data):
     """Extract all unique categories from responses data and return them sorted alphabetically"""
     categories = set()
@@ -310,8 +401,20 @@ def get_sorted_categories(responses_data):
     
     return sorted(list(categories))
 
-def test_on_example(model, tokenizer, vector, layer, test_example, max_new_tokens=50, steering_token_window=None):
-    """Test the optimized vector on an example"""
+def test_on_example(model, tokenizer, vector, layer, test_example, max_new_tokens=50, steering_token_window=None, additional_vectors=None):
+    """Test the optimized vector on an example.
+
+    Parameters
+    ----------
+    vector : torch.Tensor
+        The *trainable* category vector we just optimised.
+    additional_vectors : list[torch.Tensor] | None
+        Extra *static* vectors (e.g. the bias vector) to attach alongside the main one.
+    """
+
+    if additional_vectors is None:
+        additional_vectors = []
+
     prompt = test_example['prompt']
     target_completion = test_example['target_completion']
     
@@ -344,8 +447,13 @@ def test_on_example(model, tokenizer, vector, layer, test_example, max_new_token
     steering_token_slice = slice(steering_start, None)
     
     # Generate with steering
-    steering_hook = (layer, steering_opt.make_steering_hook_hf(vector, token=steering_token_slice))
-    with steering_opt.hf_hooks_contextmanager(model, [steering_hook]): 
+
+    hooks = [(layer, steering_opt.make_steering_hook_hf(vector, token=steering_token_slice))]
+    for extra_v in additional_vectors:
+        if extra_v is not None:
+            hooks.append((layer, steering_opt.make_steering_hook_hf(extra_v, token=steering_token_slice)))
+
+    with steering_opt.hf_hooks_contextmanager(model, hooks): 
         generated_tokens = model.generate(
             **tokenizer(prompt, return_tensors='pt').to(model.device), 
             max_new_tokens=max_new_tokens,
@@ -458,40 +566,49 @@ def main():
         print(f"  [{idx}] {category}")
     
     # Check if steering_vector_idx is valid
-    if args.steering_vector_idx < 0 or args.steering_vector_idx >= len(all_categories):
-        raise ValueError(f"Invalid steering_vector_idx: {args.steering_vector_idx}. Must be between 0 and {len(all_categories)-1}")
+    if args.steering_vector_idx < -1 or args.steering_vector_idx >= len(all_categories):
+        raise ValueError(f"Invalid steering_vector_idx: {args.steering_vector_idx}. Must be between -1 and {len(all_categories)-1}")
     
-    # Get the target category name
-    target_category = all_categories[args.steering_vector_idx]
-    print(f"\nOptimizing vector for category: {target_category} (index {args.steering_vector_idx})")
-    
-    # Initialize wandb
-    wandb_run = None
-    lrs_str = "-".join([str(lr) for lr in learning_rates])
-    run_name = f"{model_name_short}_idx{args.steering_vector_idx}_lr{lrs_str}_n{args.n_training_examples}"
-    if args.use_wandb:
-        if wandb is None:
-            raise ImportError("wandb is not installed. Please install it with `pip install wandb`")
+    bias_vector = None  # may be populated later
+
+    # Handle general bias vector case
+    if args.steering_vector_idx == -1:
+        target_category = "bias"
+        print("\nOptimizing general bias vector (full rollouts)")
+        training_examples = generate_bias_examples(
+            valid_responses,
+            tokenizer,
+            model,
+            args.n_training_examples
+        )
+        max_activation = 1.0  # Not used for bias vector
+    else:
+        # Get the target category name
+        target_category = all_categories[args.steering_vector_idx]
+        print(f"\nOptimizing vector for category: {target_category} (index {args.steering_vector_idx})")
         
-        wandb_run = wandb.init(
-            project=args.wandb_project,
-            name=run_name,
-            config=vars(args)
+        # Extract examples only for the target category
+        print(f"Extracting examples for category {target_category}...")
+        training_examples, max_activation = extract_examples_for_category(
+            valid_responses, 
+            target_category, 
+            tokenizer,
+            args.n_training_examples,
+            model
         )
 
-    # Extract examples only for the target category
-    print(f"Extracting examples for category {target_category}...")
-    training_examples, max_activation = extract_examples_for_category(
-        valid_responses, 
-        target_category, 
-        tokenizer,
-        args.n_training_examples,
-        model
-    )
-    
-    if not training_examples:
-        print(f"No valid training examples found for category {target_category}. Exiting.")
-        return
+        # --- Load bias vector (if available) to attach during optimisation ---
+        bias_vector = None
+        bias_path = os.path.join(args.save_path, f"{model_name_short}_bias.pt")
+        if os.path.exists(bias_path):
+            try:
+                bias_dict = torch.load(bias_path, map_location=model.device)
+                if isinstance(bias_dict, dict):
+                    bias_vector = bias_dict.get("bias", None)
+                elif isinstance(bias_dict, torch.Tensor):
+                    bias_vector = bias_dict
+            except Exception as e:
+                print(f"Warning: failed to load bias vector from {bias_path}: {e}")
 
     # Proceed even if no separate test examples are available.
         
@@ -531,7 +648,8 @@ def main():
                 return_info=True,
                 return_loss_history=True,
                 steering_token_window=args.steering_token_window,
-                wandb_run=wandb_run
+                wandb_run=None,
+                static_vectors=[bias_vector] if bias_vector is not None else None
             )
             
             # Store results
@@ -574,6 +692,22 @@ def main():
     print(f"\nBest learning rate: {best_lr} (final loss: {best_result['final_loss']:.4f})")
     # Evaluation loss removed – only training loss is reported.
     
+    # Initialize wandb
+    wandb_run = None
+    lrs_str = "-".join([str(lr) for lr in learning_rates])
+    # Use "bias" instead of -1 in run names and file paths
+    vector_id = "bias" if args.steering_vector_idx == -1 else f"idx{args.steering_vector_idx}"
+    run_name = f"{model_name_short}_{vector_id}_lr{lrs_str}_n{args.n_training_examples}"
+    if args.use_wandb:
+        if wandb is None:
+            raise ImportError("wandb is not installed. Please install it with `pip install wandb`")
+        
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config=vars(args)
+        )
+
     # Save hyperparameters for this vector
     hyperparams = {
         "layer": args.layer,
@@ -588,7 +722,8 @@ def main():
         "minibatch_size": args.minibatch_size,
         "steering_token_window": args.steering_token_window
     }
-    save_hyperparameters(hyperparams, model_name_short, args.steering_vector_idx, target_category)
+    # Use "bias" instead of steering_vector_idx in hyperparams filename
+    save_hyperparameters(hyperparams, model_name_short, vector_id, target_category)
     
     # Log best hyperparameters and summary to wandb
     if wandb_run:
@@ -600,7 +735,8 @@ def main():
     # Save training losses for best learning rate in the format expected by visualization
     losses_dir = f"results/vars/losses"
     os.makedirs(losses_dir, exist_ok=True)
-    losses_path = f"{losses_dir}/losses_{model_name_short}_idx{args.steering_vector_idx}.pt"
+    # Use "bias" instead of steering_vector_idx in losses filename
+    losses_path = f"{losses_dir}/losses_{model_name_short}_{vector_id}.pt"
     
     # Prepare loss data in the format expected by visualize_vector_losses.py
     loss_data = {
@@ -624,7 +760,8 @@ def main():
             args.layer, 
             train_example,
             max_new_tokens=args.test_max_tokens,
-            steering_token_window=args.steering_token_window
+            steering_token_window=args.steering_token_window,
+            additional_vectors=[bias_vector] if bias_vector is not None else None
         )
     
     # Free memory
@@ -634,7 +771,8 @@ def main():
     # Save best vector
     # TODO: make this dynamic
     os.makedirs(args.save_path, exist_ok=True)
-    vectors_path = f"{args.save_path}/{model_name_short}_idx{args.steering_vector_idx}.pt"
+    # Use "bias" instead of steering_vector_idx in vectors filename
+    vectors_path = f"{args.save_path}/{model_name_short}_{vector_id}.pt"
     optimized_vectors = {}
     optimized_vectors[target_category] = best_result['vector']
     torch.save(optimized_vectors, vectors_path)

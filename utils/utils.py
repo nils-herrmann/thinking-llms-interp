@@ -638,8 +638,10 @@ def load_steering_vectors(device: str = "cpu", hyperparams_dir: str | None = Non
     The optimizer (see `train-vectors/optimize_steering_vectors.py`) saves:
       1. Hyperparameter files:  train-vectors/results/vars/hyperparams/steering_vector_hyperparams_{model}_{idx}.json
          Each JSON has a top-level key ``category`` indicating which reasoning category the vector targets.
+         Also loads steering_vector_hyperparams_{model}_bias.json for the general bias vector.
       2. Vector files:          train-vectors/results/vars/optimized_vectors/{model}_idx{idx}.pt
          Each ``.pt`` file stores a ``dict`` mapping that same category name to a ``torch.Tensor``.
+         Also loads {model}_bias.pt for the general bias vector.
 
     This helper searches those directories, pairs the JSONs and ``.pt`` files by *model* and *idx*,
     then builds a single dictionary ``{category_name: tensor_on_requested_device}``.
@@ -661,6 +663,7 @@ def load_steering_vectors(device: str = "cpu", hyperparams_dir: str | None = Non
     -------
     dict[str, torch.Tensor]
         Mapping from reasoning *category* to the corresponding steering *vector* tensor.
+        Also includes a "bias" key for the general bias vector if available.
     """
 
     import glob  # Local import to avoid slowing start-up when not needed
@@ -677,7 +680,7 @@ def load_steering_vectors(device: str = "cpu", hyperparams_dir: str | None = Non
         print_and_flush(f"Loading steering vectors from:\n  Hyperparams: {hyperparams_dir}\n  Vectors:     {vectors_dir}")
 
     # Pattern to extract {model_name_short} and {idx} from filenames
-    hp_pattern = re.compile(r"steering_vector_hyperparams_(.+?)_(\d+)\.json")
+    hp_pattern = re.compile(r"steering_vector_hyperparams_(.+?)_(\d+|bias)\.json")
 
     category_to_vector: dict[str, torch.Tensor] = {}
 
@@ -690,7 +693,8 @@ def load_steering_vectors(device: str = "cpu", hyperparams_dir: str | None = Non
             continue
 
         model_name_short, idx_str = match.groups()
-        vector_path = os.path.join(vectors_dir, f"{model_name_short}_idx{idx_str}.pt")
+        # Handle both numbered indices and "bias"
+        vector_path = os.path.join(vectors_dir, f"{model_name_short}_{'idx' + idx_str if idx_str.isdigit() else idx_str}.pt")
 
         # Load hyperparameters JSON to get the category name
         try:
@@ -734,10 +738,14 @@ def load_steering_vectors(device: str = "cpu", hyperparams_dir: str | None = Non
 
         # Move tensor to desired device and ensure float32/float16 is preserved
         vector_tensor = vector_tensor.to(device)
-        category_to_vector[category] = vector_tensor
+        # For bias vector, store under "bias" key regardless of what's in the JSON
+        if idx_str == "bias":
+            category_to_vector["bias"] = vector_tensor
+        else:
+            category_to_vector[category] = vector_tensor
 
         if verbose:
-            print_and_flush(f"[load_steering_vectors] Loaded vector for '{category}' from idx {idx_str} (model {model_name_short})")
+            print_and_flush(f"[load_steering_vectors] Loaded vector for '{category}' from {idx_str} (model {model_name_short})")
 
     if verbose:
         print_and_flush(f"[load_steering_vectors] Loaded {len(category_to_vector)} vectors.")

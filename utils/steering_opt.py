@@ -112,6 +112,7 @@ def optimize_vector_simple(
     steering_token_window: Optional[int] = None,
     projection_clamp: bool = False,
     wandb_run=None,
+    static_vectors: Optional[list[torch.Tensor]] = None,
 ):
     """One‑stop promotion‑steering optimiser matching the paper’s details."""
 
@@ -143,6 +144,12 @@ def optimize_vector_simple(
 
     # ---------------- Optimiser & LR schedule ----------- #
     optim = torch.optim.Adam([vector], lr=lr)
+
+    # Ensure static_vectors is a list of tensors on correct device
+    if static_vectors is None:
+        static_vectors_local: list[torch.Tensor] = []
+    else:
+        static_vectors_local = [sv.to(model.device).detach() for sv in static_vectors]
 
     # ---- learning-rate schedule ----
     # We want the scheduler to advance *once per optimiser step* (i.e. per minibatch).
@@ -193,7 +200,7 @@ def optimize_vector_simple(
                 steering_slices.append(slice(start, L))
 
             # Hook for this batch
-            def batch_hook(_m, args, slices=steering_slices):
+            def batch_hook(_m, args, slices=steering_slices, stat_vecs=static_vectors_local):
                 (x,) = args
                 v_local = vector.to(x)
                 for row, sl in enumerate(slices):
@@ -203,6 +210,11 @@ def optimize_vector_simple(
                         x[row, sl] = seg - coef.unsqueeze(-1) * v_local + v_local
                     else:
                         x[row, sl] += v_local
+
+                    # Add static vectors (always additive, no projection-clamp)
+                    if stat_vecs:
+                        for sv in stat_vecs:
+                            x[row, sl] += sv
                 return (x,)
 
             with hf_hooks_contextmanager(model, [(layer, batch_hook)]):
