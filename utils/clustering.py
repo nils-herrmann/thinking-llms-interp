@@ -1364,7 +1364,7 @@ Only include the JSON object in your response, with no additional text before or
     }
 
 
-def generate_representative_examples(cluster_centers, texts, cluster_labels, example_activations, clustering_data=None):
+def generate_representative_examples(cluster_centers, texts, cluster_labels, example_activations, clustering_data=None, model_id=None, layer=None, n_clusters=None):
     """
     Generate representative examples for each cluster.
 
@@ -1372,9 +1372,9 @@ def generate_representative_examples(cluster_centers, texts, cluster_labels, exa
     corresponding cluster centroid.  However, for the SAE-based clustering
     (method == "sae_topk") the decoder weights used as centroids are often not
     good proxies for membership strength.  In that special case we instead
-    compute the encoder activations for every example and rank sentences by
-    the magnitude of the activation for the latent that produced the
-    cluster label.
+    load the SAE directly and use its encoder to compute activations for every 
+    example and rank sentences by the magnitude of the activation for the latent 
+    that produced the cluster label.
 
     Parameters:
     -----------
@@ -1389,8 +1389,13 @@ def generate_representative_examples(cluster_centers, texts, cluster_labels, exa
     clustering_data : dict, optional
         Full clustering artefact returned by `load_trained_clustering_data`.
         If provided and `clustering_data["method"] == "sae_topk"`, the SAE
-        parameters are used to rank examples; otherwise the original
-        centroid-distance logic is applied.
+        will be loaded directly; otherwise the original centroid-distance logic is applied.
+    model_id : str, optional
+        Model identifier (required for SAE mode).
+    layer : int, optional
+        Layer number (required for SAE mode).
+    n_clusters : int, optional
+        Number of clusters (required for SAE mode).
 
     Returns:
     --------
@@ -1404,20 +1409,25 @@ def generate_representative_examples(cluster_centers, texts, cluster_labels, exa
     sae_mode = clustering_data is not None and clustering_data.get('method') == 'sae_topk'
 
     if sae_mode:
-        # --- Prepare encoder activations once for efficiency ---
+        # --- Load SAE directly for more accurate ranking ---
+        if model_id is None or layer is None or n_clusters is None:
+            raise ValueError("model_id, layer, and n_clusters are required for SAE mode")
+        
+        # Import load_sae from utils.sae
+        from utils.sae import load_sae
         import torch
-        encoder_weight = clustering_data['encoder_weight']
-        encoder_bias = clustering_data['encoder_bias']
-        b_dec = clustering_data['b_dec']
-
-        # Move to CPU / numpy
-        encoder_weight_np = encoder_weight.detach().cpu().numpy() if isinstance(encoder_weight, torch.Tensor) else encoder_weight
-        encoder_bias_np = encoder_bias.detach().cpu().numpy() if isinstance(encoder_bias, torch.Tensor) else encoder_bias
-        b_dec_np = b_dec.detach().cpu().numpy() if isinstance(b_dec, torch.Tensor) else b_dec
-
-        # Centre activations in the same way as when the SAE was trained
-        centered_activations = example_activations - b_dec_np
-        encoded_activations = np.dot(centered_activations, encoder_weight_np.T) + encoder_bias_np  # (n_examples, n_latents)
+        
+        # Load the SAE
+        sae, _ = load_sae(model_id, layer, n_clusters)
+        
+        # Convert activations to torch tensor and move to appropriate device
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        sae = sae.to(device)
+        activations_tensor = torch.from_numpy(example_activations).float().to(device)
+        
+        # Use SAE encoder to get latent activations
+        with torch.no_grad():
+            encoded_activations = sae.encoder(activations_tensor - sae.b_dec).detach().cpu().numpy()
 
     # Iterate over clusters
     for cluster_idx in tqdm(range(len(cluster_centers)), desc="Generating representative examples"):
@@ -1616,8 +1626,7 @@ def evaluate_clustering_completeness(texts, categories, model, n_test_examples, 
     return results
 
 
-def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, example_activations, cluster_centers, 
-                       model_name, n_autograder_examples, n_description_examples, repetitions=5):
+def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, example_activations, cluster_centers, model_name, n_autograder_examples, n_description_examples, repetitions=5, model_id=None, layer=None, clustering_data=None):
     """
     Evaluate clustering using both accuracy and optionally completeness autograders.
     
@@ -1639,6 +1648,14 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         Number of examples from each cluster to use for autograding
     n_description_examples : int
         Number of examples to use for generating descriptions
+    repetitions : int, default 5
+        Number of repetitions to run
+    model_id : str, optional
+        Model identifier (required for SAE mode)
+    layer : int, optional
+        Layer number (required for SAE mode)
+    clustering_data : dict, optional
+        Clustering data (used to determine if SAE mode is needed)
         
     Returns:
     --------
@@ -1650,7 +1667,8 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
 
     # Generate representative examples
     representative_examples = generate_representative_examples(
-        cluster_centers, texts, cluster_labels, example_activations
+        cluster_centers, texts, cluster_labels, example_activations, 
+        clustering_data=clustering_data, model_id=model_id, layer=layer, n_clusters=n_clusters
     )
     
     all_results = []

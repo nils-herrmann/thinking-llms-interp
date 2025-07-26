@@ -118,7 +118,8 @@ def submit_description_batches():
                 
                 # Generate representative examples
                 representative_examples = generate_representative_examples(
-                    cluster_centers, all_texts, cluster_labels, all_activations, clustering_data=clustering_data
+                    cluster_centers, all_texts, cluster_labels, all_activations, 
+                    clustering_data=clustering_data, model_id=model_id, layer=args.layer, n_clusters=n_clusters
                 )
                 
                 # Prepare examples for batch processing

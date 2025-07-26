@@ -183,7 +183,8 @@ plt.show()
 # Generate representative examples for each cluster
 print("Generating representative examples...")
 representative_examples = generate_representative_examples(
-    cluster_centers, all_texts, cluster_labels, all_activations, clustering_data=clustering_data
+    cluster_centers, all_texts, cluster_labels, all_activations, 
+    clustering_data=clustering_data, model_id=model_id, layer=LAYER, n_clusters=N_CLUSTERS
 )
 
 print("Representative examples by cluster:")
