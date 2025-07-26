@@ -764,7 +764,7 @@ def completeness_autograder(sentences, categories, model, ground_truth_labels=No
     
     return result_dict
 
-def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_autograder_examples, max_sentences_per_prompt=50):
+def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_autograder_examples, max_sentences_per_prompt=50, target_cluster_percentage=0.2):
     """
     Binary autograder that evaluates each cluster independently against examples from outside the cluster.
     
@@ -773,8 +773,9 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_aut
         categories (list): List of tuples where each tuple is (cluster_id, title, description)
         ground_truth_labels (list): List of cluster IDs (as strings) for each sentence in sentences
         model (str): Model to use for the autograding
-        n_autograder_examples (int): Number of examples to sample from each cluster for testing
+        n_autograder_examples (int): Total number of examples to use for testing each cluster
         max_sentences_per_prompt (int): Maximum number of sentences to process per prompt
+        target_cluster_percentage (float): Percentage of examples to take from target cluster (default: 0.2)
     
     Returns:
         dict: Metrics including precision, recall, accuracy and F1 score for each category
@@ -796,12 +797,16 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_aut
         in_cluster_indices = [i for i, label in enumerate(ground_truth_labels) if label == cluster_id_str]
         out_cluster_indices = [i for i, label in enumerate(ground_truth_labels) if label != cluster_id_str]
         
-        # Get n_autograder_examples from the current cluster
-        from_cluster_count = min(len(in_cluster_indices), n_autograder_examples)
-        in_cluster_sample = random.sample(in_cluster_indices, from_cluster_count)
+        # Calculate number of examples from target cluster and outside clusters based on percentage
+        from_cluster_count = max(1, int(n_autograder_examples * target_cluster_percentage))
+        from_outside_count = n_autograder_examples - from_cluster_count
         
-        # Get equal number of examples from outside the cluster
-        from_outside_count = min(len(out_cluster_indices), n_autograder_examples)
+        # Ensure we don't exceed available examples
+        from_cluster_count = min(len(in_cluster_indices), from_cluster_count)
+        from_outside_count = min(len(out_cluster_indices), from_outside_count)
+        
+        # Sample examples
+        in_cluster_sample = random.sample(in_cluster_indices, from_cluster_count)
         out_cluster_sample = random.sample(out_cluster_indices, from_outside_count)
         
         # Combine the samples and remember the ground truth
