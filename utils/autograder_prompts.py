@@ -139,10 +139,19 @@ Look for:
     prompt += """
 
 Your response should be in this exact format:
-Title: [concise title naming the specific reasoning function]
-Description: [2-3 sentences explaining (1) what is the reasoning process that this cluster is about, (2) what is INCLUDED and NOT INCLUDED in this category]
+Title: [crisp, single-concept title without slashes, parentheses, or compound phrases]
+Description: [2-3 sentences explaining (1) the abstract reasoning process this cluster represents, (2) what is INCLUDED and NOT INCLUDED in this category, focusing on the cognitive function rather than domain-specific content if possible]
 
-Avoid overly general descriptions. Be precise enough that someone could reliably identify new examples of this reasoning function.
+Guidelines for titles:
+- Use simple, clear nouns or verb phrases
+- Avoid slashes (/) and parentheses ()
+- Capture one core reasoning concept
+
+Guidelines for descriptions:
+- Focus on the abstract cognitive or reasoning function
+- Avoid committing to much to specific domains or subject matters
+- Describe the reasoning pattern that could apply across different contexts
+- Be precise enough that someone could reliably identify new examples of this reasoning function.
 """
     
     return prompt
