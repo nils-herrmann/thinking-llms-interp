@@ -9,8 +9,7 @@ import gc
 from utils.utils import print_and_flush, check_batch_status
 from utils.clustering import (
     SUPPORTED_CLUSTERING_METHODS,
-    load_trained_clustering_data, predict_clusters, save_clustering_results,
-    generate_representative_examples, compute_centroid_orthogonality
+    load_trained_clustering_data, predict_clusters, save_clustering_results, compute_centroid_orthogonality
 )
 from utils.clustering_batched import (
     accuracy_autograder_batch, process_accuracy_batch,

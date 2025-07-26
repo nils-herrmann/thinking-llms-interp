@@ -1364,53 +1364,88 @@ Only include the JSON object in your response, with no additional text before or
     }
 
 
-def generate_representative_examples(cluster_centers, texts, cluster_labels, example_activations):
+def generate_representative_examples(cluster_centers, texts, cluster_labels, example_activations, clustering_data=None):
     """
-    Generate representative examples for each cluster based on distance to centroid.
-    
+    Generate representative examples for each cluster.
+
+    For most clustering methods, examples are ranked by Euclidean distance to the
+    corresponding cluster centroid.  However, for the SAE-based clustering
+    (method == "sae_topk") the decoder weights used as centroids are often not
+    good proxies for membership strength.  In that special case we instead
+    compute the encoder activations for every example and rank sentences by
+    the magnitude of the activation for the latent that produced the
+    cluster label.
+
     Parameters:
     -----------
     cluster_centers : numpy.ndarray
-        Cluster centers
+        Cluster centres (unused for SAE ranking).
     texts : list
-        List of texts
+        List of sentences / reasoning steps.
     cluster_labels : numpy.ndarray
-        Cluster labels for each text
+        Cluster labels for each text (length == len(texts)).
     example_activations : numpy.ndarray
-        Normalized activation vectors
-        
+        Normalised activation vectors (same order as texts).
+    clustering_data : dict, optional
+        Full clustering artefact returned by `load_trained_clustering_data`.
+        If provided and `clustering_data["method"] == "sae_topk"`, the SAE
+        parameters are used to rank examples; otherwise the original
+        centroid-distance logic is applied.
+
     Returns:
     --------
     dict
-        Dictionary mapping cluster_idx to list of representative examples
+        Mapping `cluster_idx -> list[str]` of sentences ordered from most to
+        least representative.
     """
     start_time = time.time()
     representative_examples = {}
-    
+
+    sae_mode = clustering_data is not None and clustering_data.get('method') == 'sae_topk'
+
+    if sae_mode:
+        # --- Prepare encoder activations once for efficiency ---
+        import torch
+        encoder_weight = clustering_data['encoder_weight']
+        encoder_bias = clustering_data['encoder_bias']
+        b_dec = clustering_data['b_dec']
+
+        # Move to CPU / numpy
+        encoder_weight_np = encoder_weight.detach().cpu().numpy() if isinstance(encoder_weight, torch.Tensor) else encoder_weight
+        encoder_bias_np = encoder_bias.detach().cpu().numpy() if isinstance(encoder_bias, torch.Tensor) else encoder_bias
+        b_dec_np = b_dec.detach().cpu().numpy() if isinstance(b_dec, torch.Tensor) else b_dec
+
+        # Centre activations in the same way as when the SAE was trained
+        centered_activations = example_activations - b_dec_np
+        encoded_activations = np.dot(centered_activations, encoder_weight_np.T) + encoder_bias_np  # (n_examples, n_latents)
+
+    # Iterate over clusters
     for cluster_idx in tqdm(range(len(cluster_centers)), desc="Generating representative examples"):
-        # Get indices of texts in this cluster
+        # Indices belonging to this cluster
         cluster_indices = np.where(cluster_labels == cluster_idx)[0]
-        
-        # Skip empty clusters
+
+        # Handle empty clusters gracefully
         if len(cluster_indices) == 0:
             representative_examples[cluster_idx] = []
             print_and_flush(f"WARNING:Skipping empty cluster {cluster_idx} in generate_representative_examples")
             continue
-            
-        # Get all examples in this cluster
+
         cluster_texts = [texts[i] for i in cluster_indices]
-        
-        # Calculate distances to centroid
-        cluster_vectors = np.stack([example_activations[i] for i in cluster_indices])
-        centroid = cluster_centers[cluster_idx]
-        distances = np.linalg.norm(cluster_vectors - centroid, axis=1)
-        
-        # Sort examples by distance to centroid
-        sorted_indices = np.argsort(distances)
-        sorted_examples = [cluster_texts[i] for i in sorted_indices]
-        
+
+        if sae_mode:
+            # Rank by descending encoder activation for this latent
+            cluster_scores = encoded_activations[cluster_indices, cluster_idx]
+            sorted_local_idx = np.argsort(-cluster_scores)  # negative for descending
+        else:
+            # Original behaviour: rank by distance to centroid
+            cluster_vectors = np.stack([example_activations[i] for i in cluster_indices])
+            centroid = cluster_centers[cluster_idx]
+            distances = np.linalg.norm(cluster_vectors - centroid, axis=1)
+            sorted_local_idx = np.argsort(distances)  # ascending distance
+
+        sorted_examples = [cluster_texts[i] for i in sorted_local_idx]
         representative_examples[cluster_idx] = sorted_examples
-    
+
     print_and_flush(f"Generated representative examples in {time.time() - start_time} seconds")
     return representative_examples
 
