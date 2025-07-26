@@ -1210,7 +1210,7 @@ def compute_centroid_orthogonality(cluster_centers):
     return avg_orthogonality
 
 
-def compute_semantic_orthogonality(categories, model="gpt-4.1", orthogonality_threshold=0.5):
+def compute_semantic_orthogonality(categories, model="gpt-4.1-mini", orthogonality_threshold=0.5):
     """
     Compute the semantic orthogonality of categories using LLM-based similarity evaluation.
     
@@ -1677,7 +1677,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         rep_results = {}
         # Generate category descriptions
         categories = generate_category_descriptions(
-            cluster_centers, model_name, "o3", n_description_examples, representative_examples
+            cluster_centers, model_name, "o4-mini", n_description_examples, representative_examples
         )
         rep_results["categories"] = categories
         for cluster_id, title, description in categories:
@@ -1687,7 +1687,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         
         # Run binary accuracy autograder (evaluates each cluster independently)
         accuracy_results = evaluate_clustering_accuracy(
-            texts, cluster_labels, categories, "gpt-4.1", n_autograder_examples
+            texts, cluster_labels, categories, "gpt-4.1-mini", n_autograder_examples
         )
         rep_results["avg_accuracy"] = accuracy_results["avg"]["accuracy"]
         rep_results["avg_f1"] = accuracy_results["avg"]["f1"]
@@ -1701,7 +1701,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         print_and_flush(f" -> Centroid orthogonality: {rep_results['orthogonality']}")
         
         # Compute semantic orthogonality
-        semantic_orthogonality_results = compute_semantic_orthogonality(categories, "gpt-4.1", 0.5)
+        semantic_orthogonality_results = compute_semantic_orthogonality(categories, "gpt-4.1-mini", 0.5)
         rep_results["semantic_orthogonality_matrix"] = semantic_orthogonality_results["semantic_orthogonality_matrix"]
         rep_results["semantic_orthogonality_explanations"] = semantic_orthogonality_results["semantic_orthogonality_explanations"]
         rep_results["semantic_orthogonality_score"] = semantic_orthogonality_results["semantic_orthogonality_score"]
@@ -1710,7 +1710,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         
         # Run completeness autograder
         str_cluster_labels = [str(label) for label in cluster_labels]
-        completeness_results = evaluate_clustering_completeness(texts, categories, "gpt-4.1", 200, str_cluster_labels)
+        completeness_results = evaluate_clustering_completeness(texts, categories, "gpt-4.1-mini", 500, str_cluster_labels)
         rep_results["assigned_fraction"] = completeness_results["assigned_fraction"]
         rep_results["avg_confidence"] = completeness_results["avg_confidence"]
         rep_results["category_counts"] = completeness_results["category_counts"]

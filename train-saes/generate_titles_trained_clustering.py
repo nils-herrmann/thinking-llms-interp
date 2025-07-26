@@ -33,7 +33,7 @@ parser.add_argument("--load_in_8bit", action="store_true", default=False,
                     help="Load model in 8-bit mode")
 parser.add_argument("--description_examples", type=int, default=200,
                     help="Number of examples to use for generating cluster descriptions")
-parser.add_argument("--evaluator_model", type=str, default="gpt-4o",
+parser.add_argument("--evaluator_model", type=str, default="o4-mini",
                     help="Model to use for generating descriptions")
 parser.add_argument("--command", type=str, choices=["submit", "process", "direct"], required=True,
                     help="Command to run: submit batch jobs, process results, or generate directly")

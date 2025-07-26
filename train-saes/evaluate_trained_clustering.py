@@ -37,9 +37,11 @@ parser.add_argument("--re_compute_cluster_labels", action="store_true", default=
                     help="Re-compute cluster labels and centers, and save them to the existing file")
 parser.add_argument("--n_autograder_examples", type=int, default=100,
                     help="Number of examples from each cluster to use for autograding")
+parser.add_argument("--n_completeness_examples", type=int, default=500,
+                    help="Number of examples to use for completeness evaluation")
 parser.add_argument("--description_examples", type=int, default=200,
                     help="Number of examples to use for generating cluster descriptions")
-parser.add_argument("--evaluator_model", type=str, default="gpt-4o",
+parser.add_argument("--evaluator_model", type=str, default="gpt-4.1-mini",
                     help="Model to use for evaluations")
 parser.add_argument("--command", type=str, choices=["submit", "process"], required=True,
                     help="Command to run: submit batch jobs or process results")
@@ -168,8 +170,17 @@ def submit_evaluation_batches():
                     }
                     
                     # Submit completeness evaluation batch  
+                    # Sample texts for completeness evaluation if needed
+                    if len(all_texts) > args.n_completeness_examples:
+                        sample_indices = random.sample(range(len(all_texts)), args.n_completeness_examples)
+                        completeness_texts = [all_texts[i] for i in sample_indices]
+                        completeness_labels = [str_cluster_labels[i] for i in sample_indices]
+                    else:
+                        completeness_texts = all_texts
+                        completeness_labels = str_cluster_labels
+                    
                     comp_batch_id, comp_metadata = completeness_autograder_batch(
-                        all_texts, categories, str_cluster_labels, 
+                        completeness_texts, categories, completeness_labels, 
                         model=args.evaluator_model
                     )
                     rep_batches["completeness"] = {

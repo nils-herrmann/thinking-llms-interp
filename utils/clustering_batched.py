@@ -10,13 +10,13 @@ import re
 import numpy as np
 import time
 import random
-from utils.utils import print_and_flush, submit_openai_batch, process_batch_results,
+from utils.utils import print_and_flush, submit_openai_batch, process_batch_results
 from utils.clustering import (
     categories_examples, parse_json_response, simplify_category_name,
 )
 
 
-def generate_cluster_descriptions_batch(model_name, cluster_examples_list, n_trace_examples=0, n_categories_examples=3, model="gpt-4o"):
+def generate_cluster_descriptions_batch(model_name, cluster_examples_list, n_trace_examples=0, n_categories_examples=3, model="o4-mini"):
     """
     Generate descriptions for multiple clusters using batch API.
     
@@ -159,7 +159,7 @@ def process_cluster_descriptions_batch(batch_id, cluster_indices):
     return categories
 
 
-def completeness_autograder_batch(sentences, categories, ground_truth_labels=None, max_sentences_per_prompt=50, model="gpt-4o"):
+def completeness_autograder_batch(sentences, categories, ground_truth_labels=None, max_sentences_per_prompt=50, model="gpt-4.1-mini"):
     """
     Autograder that evaluates if sentences belong to any of the provided categories using batch API.
     
@@ -497,7 +497,7 @@ def process_completeness_batch(batch_id, metadata):
     return result_dict
 
 
-def accuracy_autograder_batch(sentences, categories, ground_truth_labels, n_autograder_examples, max_sentences_per_prompt=50, model="gpt-4o"):
+def accuracy_autograder_batch(sentences, categories, ground_truth_labels, n_autograder_examples, max_sentences_per_prompt=50, model="gpt-4.1-mini"):
     """
     Binary autograder that evaluates each cluster independently against examples from outside the cluster using batch API.
     
@@ -791,7 +791,7 @@ def process_accuracy_batch(batch_id, metadata):
     return final_results
 
 
-def compute_semantic_orthogonality_batch(categories, orthogonality_threshold=0.5, model="gpt-4o"):
+def compute_semantic_orthogonality_batch(categories, orthogonality_threshold=0.5, model="gpt-4.1-mini"):
     """
     Compute the semantic orthogonality of categories using LLM-based similarity evaluation with batch API.
     
