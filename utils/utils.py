@@ -269,7 +269,7 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer):
     overall_running_mean = torch.zeros(1, model.config.hidden_size)
     overall_running_count = 0
 
-    print(f"Extracting activations for {n_examples} sentences...")
+    print(f"Extracting activations for {n_examples} responses...")
     for response_data in tqdm(responses_data):
         if not response_data.get("thinking_process"):
             continue
