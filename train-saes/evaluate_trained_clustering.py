@@ -10,7 +10,8 @@ from utils.utils import print_and_flush
 from utils.clustering_batched import check_batch_status
 from utils.clustering import (
     SUPPORTED_CLUSTERING_METHODS,
-    load_trained_clustering_data, predict_clusters, save_clustering_results, compute_centroid_orthogonality
+    load_trained_clustering_data, predict_clusters, save_clustering_results, compute_centroid_orthogonality,
+    evaluate_clustering_scoring_metrics
 )
 from utils.clustering_batched import (
     accuracy_autograder_batch, process_accuracy_batch,
@@ -44,8 +45,8 @@ parser.add_argument("--description_examples", type=int, default=200,
                     help="Number of examples to use for generating cluster descriptions")
 parser.add_argument("--evaluator_model", type=str, default="gpt-4.1-mini",
                     help="Model to use for evaluations")
-parser.add_argument("--command", type=str, choices=["submit", "process"], required=True,
-                    help="Command to run: submit batch jobs or process results")
+parser.add_argument("--command", type=str, choices=["submit", "process", "direct"], required=True,
+                    help="Command to run: submit batch jobs, process results, or evaluate directly")
 parser.add_argument("--batch_file", type=str, default=None,
                     help="JSON file containing batch information (for process command)")
 parser.add_argument("--check_status", action="store_true", default=False,
@@ -462,6 +463,114 @@ def process_evaluation_batches():
     print_and_flush("All evaluation batch results processed successfully!")
 
 
+def evaluate_clustering_direct():
+    """Evaluate clustering directly without using batch API."""
+    print_and_flush("=== EVALUATING CLUSTERING DIRECTLY ===")
+    
+    # Load model and process activations
+    print_and_flush("Loading model and processing activations...")
+    model, tokenizer = utils.load_model(
+        model_name=args.model,
+        load_in_8bit=args.load_in_8bit
+    )
+
+    # Process saved responses
+    all_activations, all_texts, overall_mean = utils.process_saved_responses(
+        args.model, 
+        args.n_examples,
+        model,
+        tokenizer,
+        args.layer
+    )
+
+    del model, tokenizer
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    # Center activations
+    all_activations = [x - overall_mean for x in all_activations]
+    all_activations = np.stack([a.reshape(-1) for a in all_activations])
+    norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
+    all_activations = all_activations / norms
+    
+    # Process each clustering method
+    for method in clustering_methods:
+        print_and_flush(f"\n=== Processing {method.upper()} ===")
+        
+        # Load existing results to get cluster sizes
+        results_json_path = f'results/vars/{method}_results_{model_id}_layer{args.layer}.json'
+        if not os.path.exists(results_json_path):
+            print_and_flush(f"No existing results found for {method} at {results_json_path}. Skipping.")
+            continue
+            
+        with open(results_json_path, 'r') as f:
+            existing_results = json.load(f)
+        
+        cluster_sizes = list(existing_results.get("results_by_cluster_size", {}).keys())
+        if not cluster_sizes:
+            print_and_flush(f"No clustering results found for {method}. Skipping.")
+            continue
+            
+        # Filter cluster sizes if specified
+        if args.cluster_sizes is not None:
+            requested_sizes = [str(size) for size in args.cluster_sizes]
+            cluster_sizes = [size for size in cluster_sizes if size in requested_sizes]
+            if not cluster_sizes:
+                print_and_flush(f"None of the requested cluster sizes {args.cluster_sizes} found for {method}. Skipping.")
+                continue
+        
+        eval_results_by_cluster_size = {}
+        
+        # Process each cluster size
+        for cluster_size in cluster_sizes:
+            n_clusters = int(cluster_size)
+            print_and_flush(f"Evaluating {method} with {n_clusters} clusters...")
+            
+            try:
+                # Load the trained clustering model
+                clustering_data = load_trained_clustering_data(model_id, args.layer, n_clusters, method)
+                cluster_centers = clustering_data['cluster_centers']
+                
+                # Predict cluster labels for current activations
+                if method == 'sae_topk':
+                    cluster_labels = predict_clusters(all_activations, clustering_data, model_id, args.layer, n_clusters)
+                else:
+                    cluster_labels = predict_clusters(all_activations, clustering_data)
+                
+                # Evaluate clustering using the direct method from clustering.py
+                evaluation_results = evaluate_clustering_scoring_metrics(
+                    all_texts, 
+                    cluster_labels, 
+                    n_clusters, 
+                    all_activations, 
+                    cluster_centers, 
+                    args.model, 
+                    args.n_autograder_examples, 
+                    args.description_examples,
+                    repetitions=args.repetitions,
+                    model_id=model_id,
+                    layer=args.layer,
+                    clustering_data=clustering_data
+                )
+                
+                eval_results_by_cluster_size[cluster_size] = evaluation_results
+                
+                print_and_flush(f"Completed evaluation for {method} with {n_clusters} clusters: avg_score={evaluation_results['avg_final_score']:.4f}")
+                
+            except Exception as e:
+                print_and_flush(f"Error processing {method} with {n_clusters} clusters: {e}")
+                continue
+        
+        # Save results using the existing function
+        if eval_results_by_cluster_size:
+            save_clustering_results(model_id, args.layer, method, eval_results_by_cluster_size)
+            print_and_flush(f"Saved results for {method}")
+        else:
+            print_and_flush(f"No results to save for {method}")
+    
+    print_and_flush("All direct evaluations completed successfully!")
+
+
 def print_evaluation_summary(results, method):
     """
     Print a summary of evaluation results.
@@ -526,6 +635,8 @@ def main():
         submit_evaluation_batches()
     elif args.command == "process":
         process_evaluation_batches()
+    elif args.command == "direct":
+        evaluate_clustering_direct()
 
 
 if __name__ == "__main__":
