@@ -98,7 +98,7 @@ def visualize_results(results_json_path, args):
         rep_final_scores = [rep['final_score'] for rep in all_repetitions]
         rep_f1_scores = [rep['avg_f1'] for rep in all_repetitions]
         rep_accuracy_scores = [rep['avg_accuracy'] for rep in all_repetitions]
-        rep_confidence_scores = [rep['assigned_fraction'] for rep in all_repetitions]  # This was avg_confidence in old format
+        rep_confidence_scores = [rep['avg_confidence'] for rep in all_repetitions]  # This metric is called 'Completeness' in the plots
         rep_orthogonality_scores = [rep['orthogonality'] for rep in all_repetitions]
         rep_semantic_orthogonality_scores = [rep['semantic_orthogonality_score'] for rep in all_repetitions]
         
