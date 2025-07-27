@@ -86,6 +86,8 @@ def visualize_method_comparison(model_id, layer, all_results):
                 
         except Exception as e:
             print_and_flush(f"Error processing results for {method}: {e}")
+            import traceback
+            print(traceback.format_exc())
             # Remove the method if we couldn't extract its metrics
             if method in methods:
                 idx = methods.index(method)
