@@ -329,7 +329,7 @@ Description: {description}
 1. Carefully analyze the sentence's functional role in a reasoning process.
 2. Compare this role to the category description provided.
 3. Consider how well the sentence exemplifies the described reasoning function.
-4. Provide a detailed explanation of your reasoning.
+4. Provide a brief explanation of your reasoning.
 5. Rate the fit on a scale from 0-10, where:
    - 0 = Very poor fit, sentence does not match the category at all
    - 3 = Poor fit, sentence somewhat relates but doesn't clearly demonstrate the function
@@ -341,10 +341,10 @@ Description: {description}
 Focus on the functional match rather than surface-level topic similarity.
 
 # Response Format:
-Your response must follow this exact JSON format:
+Your response must follow this exact JSON format. The explanation must be a single-line string with no newlines:
 ```json
 {{
-  "explanation": "Detailed explanation of how well the sentence matches the category and your reasoning for the score",
+  "explanation": "Brief explanation of how well the sentence matches the category and your reasoning for the score",
   "completeness_score": <integer from 0-10>
 }}
 ```
