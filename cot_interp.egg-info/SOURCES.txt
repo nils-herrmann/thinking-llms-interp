@@ -6,6 +6,7 @@ cot_interp.egg-info/top_level.txt
 messages/__init__.py
 messages/messages.py
 utils/__init__.py
+utils/autograder_prompts.py
 utils/clustering.py
 utils/clustering_batched.py
 utils/clustering_methods.py
