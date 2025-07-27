@@ -24,7 +24,7 @@ import random
 # %%
 
 parser = argparse.ArgumentParser(description="Evaluate saved clustering models using batch API")
-parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
                     help="Model to analyze")
 parser.add_argument("--layer", type=int, default=12,
                     help="Layer to analyze")
