@@ -50,6 +50,52 @@ parser.add_argument("--cluster_sizes", type=int, nargs='+', default=None,
 args, _ = parser.parse_known_args()
 
 
+def create_empty_results_json(clustering_method, model_id, layer, cluster_sizes):
+    """
+    Create a JSON file with empty results structure for title generation script to use.
+    
+    Parameters:
+    -----------
+    clustering_method : str
+        Name of the clustering method
+    model_id : str
+        Model identifier
+    layer : int
+        Layer number
+    cluster_sizes : list
+        List of cluster sizes to create empty results for
+    """
+    # Create the results directory if it doesn't exist
+    results_dir = f"results/vars"
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # Create the JSON file path
+    results_json_path = f"{results_dir}/{clustering_method}_results_{model_id}_layer{layer}.json"
+    
+    # Create the basic structure with empty results for each cluster size
+    results_data = {
+        "clustering_method": clustering_method,
+        "model_id": f"full_model_path/{model_id}",  # Match expected format
+        "layer": layer,
+        "results_by_cluster_size": {}
+    }
+    
+    # Add empty results for each cluster size
+    for cluster_size in cluster_sizes:
+        results_data["results_by_cluster_size"][str(cluster_size)] = {
+            "all_results": [],  # Empty list to be filled by title generation script
+            "avg_final_score": 0.0,
+            "statistics": {}
+        }
+    
+    # Save the JSON file
+    with open(results_json_path, 'w') as f:
+        json.dump(results_data, f, indent=2)
+    
+    print_and_flush(f"Created empty results JSON at {results_json_path}")
+    return results_data
+
+
 def submit_description_batches():
     """Submit batch jobs for generating cluster descriptions."""
     print_and_flush("=== SUBMITTING CLUSTER DESCRIPTION BATCHES ===")
@@ -92,11 +138,17 @@ def submit_description_batches():
         # Load existing results to get cluster sizes
         results_json_path = f'results/vars/{method}_results_{model_id}_layer{args.layer}.json'
         if not os.path.exists(results_json_path):
-            print_and_flush(f"No existing results found for {method} at {results_json_path}. Skipping.")
-            continue
-            
-        with open(results_json_path, 'r') as f:
-            existing_results = json.load(f)
+            print_and_flush(f"No existing results found for {method} at {results_json_path}.")
+            # Create empty results JSON if cluster_sizes are specified
+            if args.cluster_sizes is not None:
+                print_and_flush(f"Creating empty results file for {method} with cluster sizes {args.cluster_sizes}")
+                existing_results = create_empty_results_json(method, model_id, args.layer, args.cluster_sizes)
+            else:
+                print_and_flush(f"No cluster sizes specified. Skipping {method}.")
+                continue
+        else:
+            with open(results_json_path, 'r') as f:
+                existing_results = json.load(f)
         
         cluster_sizes = list(existing_results.get("results_by_cluster_size", {}).keys())
         if not cluster_sizes:
@@ -256,11 +308,17 @@ def process_description_batches():
         # Load existing results
         results_json_path = f'results/vars/{method}_results_{model_id}_layer{args.layer}.json'
         if not os.path.exists(results_json_path):
-            print_and_flush(f"No existing results found for {method} at {results_json_path}. Skipping.")
-            continue
-            
-        with open(results_json_path, 'r') as f:
-            existing_results = json.load(f)
+            print_and_flush(f"No existing results found for {method} at {results_json_path}.")
+            # Create empty results JSON if cluster_sizes are specified
+            if args.cluster_sizes is not None:
+                print_and_flush(f"Creating empty results file for {method} with cluster sizes {args.cluster_sizes}")
+                existing_results = create_empty_results_json(method, model_id, args.layer, args.cluster_sizes)
+            else:
+                print_and_flush(f"No cluster sizes specified. Skipping {method}.")
+                continue
+        else:
+            with open(results_json_path, 'r') as f:
+                existing_results = json.load(f)
         
         # Filter cluster sizes if specified
         if args.cluster_sizes is not None:
@@ -379,11 +437,17 @@ def generate_descriptions_direct():
         # Load existing results to get cluster sizes
         results_json_path = f'results/vars/{method}_results_{model_id}_layer{args.layer}.json'
         if not os.path.exists(results_json_path):
-            print_and_flush(f"No existing results found for {method} at {results_json_path}. Skipping.")
-            continue
-            
-        with open(results_json_path, 'r') as f:
-            existing_results = json.load(f)
+            print_and_flush(f"No existing results found for {method} at {results_json_path}.")
+            # Create empty results JSON if cluster_sizes are specified
+            if args.cluster_sizes is not None:
+                print_and_flush(f"Creating empty results file for {method} with cluster sizes {args.cluster_sizes}")
+                existing_results = create_empty_results_json(method, model_id, args.layer, args.cluster_sizes)
+            else:
+                print_and_flush(f"No cluster sizes specified. Skipping {method}.")
+                continue
+        else:
+            with open(results_json_path, 'r') as f:
+                existing_results = json.load(f)
         
         cluster_sizes = list(existing_results.get("results_by_cluster_size", {}).keys())
         if not cluster_sizes:
