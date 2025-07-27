@@ -696,8 +696,8 @@ def print_evaluation_summary(results, method):
         print_and_flush(f"Optimal recall: {best_cluster['avg_recall']:.4f}")
     if 'avg_f1' in best_cluster:
         print_and_flush(f"Optimal F1: {best_cluster['avg_f1']:.4f}")
-    if 'avg_confidence' in best_cluster:
-        print_and_flush(f"Optimal completeness: {best_cluster['avg_confidence']:.4f}")
+    if 'avg_completeness' in best_cluster:
+        print_and_flush(f"Optimal completeness: {best_cluster['avg_completeness']:.4f}")
     if 'orthogonality' in best_cluster:
         print_and_flush(f"Optimal orthogonality: {best_cluster['orthogonality']:.4f}")
     if 'semantic_orthogonality' in best_cluster:

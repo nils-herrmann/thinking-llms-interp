@@ -78,7 +78,7 @@ def visualize_method_comparison(model_id, layer, all_results):
             best_cluster = results['best_cluster']
             
             orthogonality_scores.append(best_cluster['orthogonality'])
-            assignment_rates.append(best_cluster['avg_confidence'])
+            assignment_rates.append(best_cluster['avg_completeness'])
             
             # Use avg_precision as accuracy (best available metric)
             accuracy_scores.append(best_cluster['avg_precision'])
