@@ -458,11 +458,10 @@ def process_evaluation_batches():
                 rep_results["categories"] = categories
                 
                 # Calculate final score
-                final_score_components = []
-                if not args.no_accuracy:
-                    final_score_components.append(rep_results.get("avg_f1", 0.0))
-                if not args.no_completeness:
-                    final_score_components.append(rep_results.get("avg_confidence", 0.0))
+                final_score_components = [
+                    rep_results.get("avg_f1", 0.0),
+                    rep_results.get("avg_confidence", 0.0)
+                ]
                 
                 if final_score_components:
                     final_score = sum(final_score_components) / len(final_score_components)
