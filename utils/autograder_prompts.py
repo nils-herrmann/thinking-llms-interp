@@ -157,66 +157,7 @@ Guidelines for descriptions:
     return prompt
 
 
-def build_completeness_autograder_prompt(categories_text, sentences_text):
-    """
-    Build a prompt for completeness autograding.
-    
-    Args:
-        categories_text (str): Formatted text describing all categories
-        sentences_text (str): Formatted text with numbered sentences to categorize
-        
-    Returns:
-        str: Formatted prompt for completeness evaluation
-    """
-    return f"""# Task: Categorize Sentences of Reasoning Traces
 
-You are a highly selective expert at categorizing reasoning sentences. Your task is to STRICTLY evaluate whether each sentence fits into one of the predefined categories. You should be CONSERVATIVE and PRECISE - only assign a category if there is a clear, unambiguous match.
-
-**CRITICAL INSTRUCTIONS:**
-- BE STRICT: Only assign a category if the sentence is a clear, strong example of that category
-- PREFER "None": When in doubt, choose "None" rather than forcing an assignment
-- AVOID false positives: It is better to miss a borderline case than to incorrectly categorize
-- REQUIRE precise match: The sentence must clearly demonstrate the specific reasoning function described
-- NO loose interpretations: Don't stretch categories to accommodate sentences that don't clearly fit
-
-## Categories:
-{categories_text}
-
-## Sentences to Categorize:
-{sentences_text}
-
-## Evaluation Criteria:
-1. Does the sentence CLEARLY and UNAMBIGUOUSLY demonstrate the exact reasoning function described?
-2. Would this sentence serve as a good TEACHING EXAMPLE of the category?
-3. Is there ANY doubt about whether it fits the category description?
-
-If you answer "no" to questions 1-2 or "yes" to question 3, assign "None".
-
-**Remember: False positives (incorrect assignments) are worse than false negatives (missed assignments). When uncertain, choose "None".**
-
-## Confidence Scoring:
-For each sentence, you must also provide a confidence score:
-- If assigning to a category: Use a score from 1-10 (1 = barely fits, 10 = perfect example)
-- If assigning "None": Always use confidence score 0
-
-## Response Format:
-Your response must follow this exact JSON format:
-```json
-{{
-  "categorizations": [
-    {{
-      "sentence_id": <sentence idx>,
-      "explanation": "Brief explanation of your reasoning and why you were certain/uncertain",
-      "assigned_category": "Category <category idx>" (not the title, just the category index) or "None",
-      "confidence": <integer from 0-10>
-    }},
-    ... (repeat for all sentences)
-  ]
-}}
-```
-
-Only include the JSON object in your response, with no additional text before or after.
-"""
 
 
 def build_accuracy_autograder_prompt(title, description, sentences_text):
@@ -361,3 +302,52 @@ def format_sentences_text_simple(sentences):
         str: Formatted sentences text for prompts
     """
     return chr(10).join([f"Sentence {i}: {sentence}" for i, sentence in enumerate(sentences)]) 
+
+
+def build_completeness_autograder_prompt(sentence, title, description):
+    """
+    Build a prompt for completeness evaluation of how well a sentence fits its assigned cluster.
+    
+    Args:
+        sentence (str): The sentence to evaluate
+        title (str): Title of the assigned cluster
+        description (str): Description of the assigned cluster
+        
+    Returns:
+        str: Formatted prompt for completeness evaluation
+    """
+    return f"""You are an expert at analyzing how well individual sentences match their assigned reasoning function categories. Your task is to evaluate how well a given sentence exemplifies the specific cognitive or procedural role described in its assigned category.
+
+# Sentence to Evaluate:
+{sentence}
+
+# Assigned Category:
+Title: {title}
+Description: {description}
+
+# Instructions:
+1. Carefully analyze the sentence's functional role in a reasoning process.
+2. Compare this role to the category description provided.
+3. Consider how well the sentence exemplifies the described reasoning function.
+4. Provide a detailed explanation of your reasoning.
+5. Rate the fit on a scale from 0-10, where:
+   - 0 = Very poor fit, sentence does not match the category at all
+   - 3 = Poor fit, sentence somewhat relates but doesn't clearly demonstrate the function
+   - 5 = Moderate fit, sentence shows some aspects of the function but not clearly
+   - 7 = Good fit, sentence clearly demonstrates the function with minor issues
+   - 9 = Excellent fit, sentence is a clear and strong example of the function
+   - 10 = Perfect fit, sentence is an ideal textbook example of the function
+
+Focus on the functional match rather than surface-level topic similarity.
+
+# Response Format:
+Your response must follow this exact JSON format:
+```json
+{{
+  "explanation": "Detailed explanation of how well the sentence matches the category and your reasoning for the score",
+  "completeness_score": <integer from 1-10>
+}}
+```
+
+Only include the JSON object in your response, with no additional text before or after.
+""" 

@@ -15,11 +15,9 @@ from tqdm import tqdm
 from utils.utils import print_and_flush, chat_batch, convert_numpy_types, NumpyEncoder
 from utils.autograder_prompts import (
     build_cluster_description_prompt,
-    build_completeness_autograder_prompt, 
     build_accuracy_autograder_prompt,
     build_semantic_orthogonality_prompt,
-    format_categories_text,
-    format_sentences_text,
+    build_completeness_autograder_prompt,
     format_sentences_text_simple
 )
 from scipy import stats
@@ -526,243 +524,7 @@ def simplify_category_name(category_name):
         return match.group(1)
     return category_name
 
-def completeness_autograder(sentences, categories, model, ground_truth_labels=None, max_sentences_per_prompt=50):
-    """
-    Autograder that evaluates if sentences belong to any of the provided categories.
-    
-    Args:
-        sentences (list): List of sentences to evaluate
-        categories (list): List of tuples where each tuple is (cluster_id, title, description)
-        model (str): Model to use for evaluation
-        ground_truth_labels (list, optional): Ground truth cluster labels for each sentence
-        max_sentences_per_prompt (int): Maximum number of sentences to process per prompt
-    
-    Returns:
-        dict: Statistics about category assignments including detailed analysis of assignments vs ground truth,
-              and confidence metrics
-    """
-    # Format the categories into a readable list for the prompt
-    categories_text = format_categories_text(categories)
-    
-    # Split sentences into chunks if necessary
-    total_sentences = len(sentences)
-    if total_sentences <= max_sentences_per_prompt:
-        # Process all sentences in a single prompt
-        sentence_chunks = [sentences]
-        ground_truth_chunks = [ground_truth_labels] if ground_truth_labels is not None else [None]
-        chunk_start_indices = [0]
-    else:
-        # Split into multiple chunks
-        sentence_chunks = []
-        ground_truth_chunks = []
-        chunk_start_indices = []
-        
-        for i in range(0, total_sentences, max_sentences_per_prompt):
-            end_idx = min(i + max_sentences_per_prompt, total_sentences)
-            sentence_chunks.append(sentences[i:end_idx])
-            chunk_start_indices.append(i)
-            
-            if ground_truth_labels is not None:
-                ground_truth_chunks.append(ground_truth_labels[i:end_idx])
-            else:
-                ground_truth_chunks.append(None)
-    
-    # Create prompts for all chunks
-    batch_prompts = []
-    
-    for chunk_idx, (sentence_chunk, chunk_start_idx) in enumerate(zip(sentence_chunks, chunk_start_indices)):
-        # Format the sentences into a numbered list (using original sentence indices)
-        sentences_text = format_sentences_text(sentence_chunk, chunk_start_idx)
 
-        prompt = build_completeness_autograder_prompt(categories_text, sentences_text)
-        
-        batch_prompts.append(prompt)
-    
-    # Process all prompts in batch
-    print(f"Processing {len(batch_prompts)} prompts in batch for completeness evaluation...")
-    responses = run_chat_batch_with_event_loop_handling(batch_prompts, model, json_mode=True)
-    
-    # Aggregate results from all chunks
-    all_categorizations = []
-    parsing_errors = []
-    
-    # Process each response from the batch
-    for i, response in enumerate(responses):        
-        try:
-            result = parse_json_response(response, expected_field='categorizations')
-            
-            # Add the categorizations from this chunk to the overall list
-            all_categorizations.extend(result["categorizations"])
-            
-        except Exception as e:
-            print(f"Error parsing response for chunk {i}: {e}")
-            print(f"Raw response: {response}")
-            parsing_errors.append({
-                "chunk_idx": i,
-                "error": str(e),
-                "raw_response": response
-            })
-    
-    # If we had parsing errors, return error information
-    if parsing_errors and not all_categorizations:
-        return {
-            "error": f"Failed to parse {len(parsing_errors)} chunks",
-            "total_sentences": total_sentences,
-            "assigned": 0,
-            "not_assigned": total_sentences,
-            "assigned_fraction": 0,
-            "not_assigned_fraction": 1.0,
-            "avg_confidence": 0.0,
-            "parsing_errors": parsing_errors
-        }
-    
-    # Aggregate statistics from all categorizations
-    assigned = 0
-    not_assigned = 0
-    category_counts = {str(cluster_id): 0 for cluster_id, _, _ in categories}
-    category_counts["None"] = 0
-    
-    # Confidence tracking
-    total_confidence = 0.0
-    category_confidences = {str(cluster_id): [] for cluster_id, _, _ in categories}
-    category_confidences["None"] = []
-    
-    # Enhanced analysis if ground truth labels are provided
-    detailed_analysis = {
-        "correct_assignments": [],      # Assigned to correct category
-        "incorrect_assignments": [],    # Assigned to wrong category  
-        "missed_assignments": [],       # Should have been assigned but weren't (assigned "None")
-    }
-    
-    # Create a mapping of category IDs for quick lookup
-    valid_category_ids = {str(cluster_id) for cluster_id, _, _ in categories}
-    
-    for item in all_categorizations:
-        sentence_idx = item["sentence_id"]
-        assigned_category = item["assigned_category"]
-        confidence = item.get("confidence", 0)
-        explanation = item.get("explanation", "")
-        sentence_text = sentences[sentence_idx]
-        
-        # Validate confidence scores
-        if assigned_category == "None" and confidence != 0:
-            print(f"Warning: Sentence {sentence_idx} assigned 'None' but has non-zero confidence {confidence}")
-            confidence = 0  # Force to 0 for "None" assignments
-        elif assigned_category != "None" and (confidence < 1 or confidence > 10):
-            print(f"Warning: Sentence {sentence_idx} has invalid confidence {confidence}, clamping to valid range")
-            confidence = max(1, min(10, confidence))
-
-        # Normalize confidence to 0-1
-        confidence = confidence / 10.0
-        
-        total_confidence += confidence
-        
-        # Process assignment counts
-        if assigned_category == "None":
-            not_assigned += 1
-            category_counts["None"] += 1
-            category_confidences["None"].append(confidence)
-        else:
-            assigned += 1
-            # Extract just the cluster ID from "Category N" format
-            category_id = simplify_category_name(assigned_category)
-            category_counts[category_id] = category_counts.get(category_id, 0) + 1
-            category_confidences[category_id].append(confidence)
-        
-        # Enhanced analysis with ground truth if available
-        if ground_truth_labels is not None and sentence_idx < len(ground_truth_labels) and sentence_idx < len(sentences):
-            ground_truth = str(ground_truth_labels[sentence_idx])
-            assigned_category_id = simplify_category_name(assigned_category) if assigned_category != "None" else "None"
-            
-            # Create detailed item for analysis
-            detailed_item = {
-                "sentence_id": sentence_idx,
-                "sentence_text": sentence_text,
-                "assigned_category": assigned_category,
-                "ground_truth_category": ground_truth,
-                "confidence": confidence,
-                "explanation": explanation
-            }
-            
-            assert ground_truth in valid_category_ids, f"Ground truth {ground_truth} not in valid category ids {valid_category_ids}"
-
-            # Sentence should have been assigned to a category
-            if assigned_category_id == ground_truth:
-                # Correctly assigned
-                detailed_analysis["correct_assignments"].append(detailed_item)
-            elif assigned_category_id == "None":
-                # Should have been assigned but wasn't
-                detailed_analysis["missed_assignments"].append(detailed_item)
-            else:
-                # Assigned to wrong category
-                detailed_analysis["incorrect_assignments"].append(detailed_item)
-    
-    # Calculate fractions
-    assigned_fraction = assigned / total_sentences if total_sentences > 0 else 0
-    not_assigned_fraction = not_assigned / total_sentences if total_sentences > 0 else 0
-    
-    # Calculate confidence metrics
-    avg_confidence = total_confidence / total_sentences if total_sentences > 0 else 0
-    
-    # Calculate average confidence by category
-    category_avg_confidences = {}
-    for category_id, confidences in category_confidences.items():
-        if confidences:
-            category_avg_confidences[category_id] = sum(confidences) / len(confidences)
-        else:
-            category_avg_confidences[category_id] = 0.0
-    
-    # Calculate detailed metrics if ground truth is available
-    completeness_metrics = {}
-    if ground_truth_labels is not None:
-        n_correct = len(detailed_analysis["correct_assignments"])
-        n_incorrect = len(detailed_analysis["incorrect_assignments"])
-        n_missed = len(detailed_analysis["missed_assignments"])
-        
-        # Sentences that should have been assigned (have valid ground truth categories)
-        should_be_assigned = n_correct + n_incorrect + n_missed
-        # Sentences that were assigned
-        were_assigned = n_correct + n_incorrect
-        
-        # Calculate confidence-based metrics
-        correct_confidences = [item["confidence"] for item in detailed_analysis["correct_assignments"]]
-        incorrect_confidences = [item["confidence"] for item in detailed_analysis["incorrect_assignments"]]
-        
-        completeness_metrics = {
-            "correct_assignments": n_correct,
-            "incorrect_assignments": n_incorrect,
-            "missed_assignments": n_missed,
-            "assignment_accuracy": n_correct / were_assigned if were_assigned > 0 else 0,
-            "assignment_recall": n_correct / should_be_assigned if should_be_assigned > 0 else 0,
-            "assignment_precision": n_correct / were_assigned if were_assigned > 0 else 0,
-            "avg_correct_confidence": sum(correct_confidences) / len(correct_confidences) if correct_confidences else 0,
-            "avg_incorrect_confidence": sum(incorrect_confidences) / len(incorrect_confidences) if incorrect_confidences else 0
-        }
-    
-    result_dict = {
-        "total_sentences": total_sentences,
-        "assigned": assigned,
-        "not_assigned": not_assigned,
-        "assigned_fraction": assigned_fraction,
-        "not_assigned_fraction": not_assigned_fraction,
-        "avg_confidence": avg_confidence,
-        "category_counts": category_counts,
-        "category_confidences": category_confidences,
-        "category_avg_confidences": category_avg_confidences,
-        "categorizations": all_categorizations,
-        "detailed_analysis": detailed_analysis,
-        "completeness_metrics": completeness_metrics
-    }
-    
-    # Add information about batching if applicable
-    if len(batch_prompts) > 1:
-        result_dict["batch_info"] = {
-            "num_batches": len(batch_prompts),
-            "max_sentences_per_prompt": max_sentences_per_prompt,
-            "parsing_errors": parsing_errors
-        }
-    
-    return result_dict
 
 def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_autograder_examples, max_sentences_per_prompt=50, target_cluster_percentage=0.2):
     """
@@ -985,6 +747,137 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_aut
         results["parsing_errors"] = parsing_errors
     
     return results
+
+
+def completeness_autograder(sentences, cluster_labels, categories, model, max_sentences_per_prompt=50):
+    """
+    Autograder that evaluates completeness by measuring how well sentences fit their assigned clusters.
+    
+    Args:
+        sentences (list): List of sentences to evaluate
+        cluster_labels (list): List of cluster IDs (as strings) for each sentence
+        categories (list): List of tuples where each tuple is (cluster_id, title, description)
+        model (str): Model to use for evaluation
+        max_sentences_per_prompt (int): Maximum number of sentences to process per prompt
+    
+    Returns:
+        dict: Statistics about completeness scores including detailed analysis
+    """
+    # Create a mapping from cluster ID to category info
+    cluster_id_to_category = {str(cluster_id): (title, description) for cluster_id, title, description in categories}
+    
+    # Filter out sentences that don't have valid cluster assignments
+    valid_evaluations = []
+    for i, (sentence, cluster_id) in enumerate(zip(sentences, cluster_labels)):
+        if str(cluster_id) in cluster_id_to_category:
+            title, description = cluster_id_to_category[str(cluster_id)]
+            valid_evaluations.append((i, sentence, str(cluster_id), title, description))
+    
+    if not valid_evaluations:
+        return {
+            "error": "No valid sentence-cluster assignments found",
+            "total_sentences": len(sentences),
+            "evaluated_sentences": 0,
+            "avg_fit_score": 0.0,
+            "responses": []
+        }
+    
+    # Split evaluations into chunks if necessary
+    if len(valid_evaluations) <= max_sentences_per_prompt:
+        # Process all evaluations in a single prompt per sentence
+        evaluation_chunks = [[eval_item] for eval_item in valid_evaluations]
+    else:
+        # Split into multiple chunks - but still one sentence per prompt for now
+        # This can be optimized later to batch multiple sentences per prompt if needed
+        evaluation_chunks = [[eval_item] for eval_item in valid_evaluations]
+    
+    # Create prompts for all evaluations
+    batch_prompts = []
+    evaluation_metadata = []
+    
+    for chunk_idx, chunk in enumerate(evaluation_chunks):
+        for eval_idx, (sentence_idx, sentence, cluster_id, title, description) in enumerate(chunk):
+            prompt = build_completeness_autograder_prompt(sentence, title, description)
+            batch_prompts.append(prompt)
+            evaluation_metadata.append({
+                "sentence_idx": sentence_idx,
+                "sentence": sentence,
+                "cluster_id": cluster_id,
+                "title": title,
+                "description": description
+            })
+    
+    # Process all prompts in batch
+    print(f"Processing {len(batch_prompts)} completeness evaluation prompts in batch...")
+    responses = run_chat_batch_with_event_loop_handling(batch_prompts, model, json_mode=True)
+    
+    # Process responses
+    all_responses = []
+    parsing_errors = []
+    total_fit_score = 0.0
+    
+    for i, response in enumerate(responses):
+        metadata = evaluation_metadata[i]
+        
+        try:
+            result = parse_json_response(response)
+            
+            completeness_score = result.get('completeness_score', 0)
+            explanation = result.get('explanation', '')
+            
+            # Validate completeness score is in range
+            if not isinstance(completeness_score, (int, float)) or completeness_score < 0 or completeness_score > 10:
+                print(f"Warning: Invalid completeness score {completeness_score}, clamping to valid range")
+                completeness_score = max(0, min(10, int(completeness_score)))
+            
+            evaluation_item = {
+                "sentence_idx": metadata["sentence_idx"],
+                "sentence": metadata["sentence"],
+                "cluster_id": metadata["cluster_id"],
+                "title": metadata["title"],
+                "description": metadata["description"],
+                "completeness_score": completeness_score,
+                "explanation": explanation
+            }
+            
+            all_responses.append(evaluation_item)
+            total_fit_score += completeness_score
+            
+        except Exception as e:
+            print(f"Error parsing completeness evaluation response {i}: {e}")
+            print(f"Raw response: {response}")
+            parsing_errors.append({
+                "sentence_idx": metadata["sentence_idx"],
+                "error": str(e),
+                "raw_response": response
+            })
+    
+    # Calculate statistics
+    num_evaluated = len(all_responses)
+    avg_fit_score = total_fit_score / num_evaluated if num_evaluated > 0 else 0.0
+    
+    # Calculate average fit score by cluster
+    avg_fit_score_by_cluster_id = {}
+    cluster_scores = {}
+    for response in all_responses:
+        cluster_id = response["cluster_id"]
+        if cluster_id not in cluster_scores:
+            cluster_scores[cluster_id] = []
+        cluster_scores[cluster_id].append(response["completeness_score"])
+    
+    for cluster_id, scores in cluster_scores.items():
+        avg_fit_score_by_cluster_id[cluster_id] = sum(scores) / len(scores) if scores else 0.0
+    
+    result_dict = {
+        "total_sentences": len(sentences),
+        "evaluated_sentences": num_evaluated,
+        "avg_fit_score": avg_fit_score,
+        "avg_fit_score_by_cluster_id": avg_fit_score_by_cluster_id,
+        "responses": all_responses,
+        "parsing_errors": parsing_errors
+    }
+    
+    return result_dict
 
 
 def compute_centroid_orthogonality(cluster_centers):
@@ -1363,7 +1256,7 @@ def evaluate_clustering_accuracy(texts, cluster_labels, categories, model, n_aut
 
 def evaluate_clustering_completeness(texts, categories, model, n_test_examples, cluster_labels=None):
     """
-    Evaluate clustering using the completeness autograder with a random sample of texts.
+    Evaluate clustering completeness by measuring how well sentences fit their assigned clusters.
     
     Parameters:
     -----------
@@ -1376,7 +1269,7 @@ def evaluate_clustering_completeness(texts, categories, model, n_test_examples, 
     n_test_examples : int
         Number of examples to use for testing completeness
     cluster_labels : list, optional
-        Ground truth cluster labels for each text
+        Cluster labels for each text (required for completeness evaluation)
         
     Returns:
     --------
@@ -1384,20 +1277,30 @@ def evaluate_clustering_completeness(texts, categories, model, n_test_examples, 
         Autograder results with detailed analysis
     """
     start_time = time.time()
+    
+    if cluster_labels is None:
+        print_and_flush("Error: cluster_labels are required for completeness evaluation")
+        return {
+            "error": "cluster_labels are required for completeness evaluation",
+            "total_sentences": len(texts),
+            "evaluated_sentences": 0,
+            "avg_fit_score": 0.0
+        }
+    
     # Sample n_test_examples randomly from all texts
     if len(texts) > n_test_examples:
         # Get random indices for sampling
         sample_indices = random.sample(range(len(texts)), n_test_examples)
         test_texts = [texts[i] for i in sample_indices]
-        test_labels = [cluster_labels[i] for i in sample_indices] if cluster_labels is not None else None
+        test_labels = [cluster_labels[i] for i in sample_indices]
     else:
         test_texts = texts
         test_labels = cluster_labels
     
-    # Run autograder on the sampled texts
+    # Run completeness autograder on the sampled texts
     for _ in range(3):
         try:
-            results = completeness_autograder(test_texts, categories, model, test_labels)
+            results = completeness_autograder(test_texts, test_labels, categories, model)
             break
         except Exception as e:
             print_and_flush(f"Error running completeness autograder: {e}")
@@ -1492,14 +1395,12 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
         # Run completeness autograder
         str_cluster_labels = [str(label) for label in cluster_labels]
         completeness_results = evaluate_clustering_completeness(texts, categories, "gpt-4.1-mini", 500, str_cluster_labels)
-        rep_results["assigned_fraction"] = completeness_results["assigned_fraction"]
-        rep_results["avg_confidence"] = completeness_results["avg_confidence"]
-        rep_results["category_counts"] = completeness_results["category_counts"]
-        rep_results["category_confidences"] = completeness_results["category_confidences"]
-        rep_results["category_avg_confidences"] = completeness_results["category_avg_confidences"]
-        rep_results["completeness_detailed"] = completeness_results["detailed_analysis"]
-        rep_results["completeness_metrics"] = completeness_results["completeness_metrics"]
-        print_and_flush(f" -> Completeness score: {rep_results['assigned_fraction']}")
+        rep_results["avg_fit_score"] = completeness_results["avg_fit_score"]
+        rep_results["avg_fit_score_by_cluster_id"] = completeness_results["avg_fit_score_by_cluster_id"]
+        rep_results["completeness_responses"] = completeness_results["responses"]
+        # Normalize completeness score to 0-1 scale for compatibility with final score calculation
+        rep_results["avg_confidence"] = completeness_results["avg_fit_score"] / 10.0
+        print_and_flush(f" -> Completeness score: {rep_results['avg_fit_score']:.2f}/10 (normalized: {rep_results['avg_confidence']:.4f})")
 
         # Calculate final score
         final_score = (rep_results["avg_f1"] + rep_results["avg_confidence"] + rep_results["semantic_orthogonality_score"]) / 3
@@ -1536,7 +1437,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     statistics = {}
     metrics_to_stat = [
         'avg_accuracy', 'avg_f1', 'avg_precision', 'avg_recall', 'orthogonality',
-        'semantic_orthogonality_score', 'assigned_fraction', 'avg_confidence', 'final_score'
+        'semantic_orthogonality_score', 'avg_fit_score', 'avg_confidence', 'final_score'
     ]
 
     for metric in metrics_to_stat:
@@ -1645,7 +1546,8 @@ def save_clustering_results(model_id, layer, clustering_method, eval_results_by_
         "avg_precision": np.mean([repetition_result["avg_precision"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "avg_recall": np.mean([repetition_result["avg_recall"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "avg_f1": np.mean([repetition_result["avg_f1"] for repetition_result in best_cluster_eval_results["all_results"]]),
-        "completeness": np.mean([repetition_result["assigned_fraction"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "avg_fit_score": np.mean([repetition_result["avg_fit_score"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "completeness": np.mean([repetition_result["avg_confidence"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "orthogonality": np.mean([repetition_result["orthogonality"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "semantic_orthogonality": np.mean([repetition_result["semantic_orthogonality_score"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "statistics": best_cluster_eval_results["statistics"]

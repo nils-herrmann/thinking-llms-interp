@@ -181,7 +181,7 @@ def submit_evaluation_batches():
                         completeness_labels = str_cluster_labels
                     
                     comp_batch_id, comp_metadata = completeness_autograder_batch(
-                        completeness_texts, categories, completeness_labels, 
+                        completeness_texts, completeness_labels, categories, 
                         model=args.evaluator_model
                     )
                     rep_batches["completeness"] = {
@@ -320,19 +320,23 @@ def process_evaluation_batches():
                         comp_batch_id = rep_data["completeness"]["batch_id"]
                         comp_metadata = rep_data["completeness"]["metadata"]
                         
-                        status = check_batch_status(comp_batch_id)
-                        if status == "completed":
-                            completeness_results = process_completeness_batch(comp_batch_id, comp_metadata)
-                            rep_results["assigned_fraction"] = completeness_results["assigned_fraction"]
-                            rep_results["avg_confidence"] = completeness_results["avg_confidence"]
-                            rep_results["category_counts"] = completeness_results["category_counts"]
-                            rep_results["category_confidences"] = completeness_results["category_confidences"]
-                            rep_results["category_avg_confidences"] = completeness_results["category_avg_confidences"]
-                            rep_results["completeness_detailed"] = completeness_results["detailed_analysis"]
-                            rep_results["completeness_metrics"] = completeness_results["completeness_metrics"]
+                        if comp_batch_id:  # Check if batch was actually submitted
+                            status = check_batch_status(comp_batch_id)
+                            if status == "completed":
+                                completeness_results = process_completeness_batch(comp_batch_id, comp_metadata)
+                                rep_results["avg_fit_score"] = completeness_results["avg_fit_score"]
+                                rep_results["avg_fit_score_by_cluster_id"] = completeness_results["avg_fit_score_by_cluster_id"]
+                                rep_results["completeness_responses"] = completeness_results["responses"]
+                                # Normalize completeness score to 0-1 scale for compatibility with final score calculation
+                                rep_results["avg_confidence"] = completeness_results["avg_fit_score"] / 10.0
+                            else:
+                                print_and_flush(f"Completeness batch {comp_batch_id} not completed (status: {status})")
+                                continue
                         else:
-                            print_and_flush(f"Completeness batch {comp_batch_id} not completed (status: {status})")
-                            continue
+                            # Handle error case
+                            completeness_results = comp_metadata
+                            rep_results["avg_fit_score"] = completeness_results.get("avg_fit_score", 0.0)
+                            rep_results["avg_confidence"] = 0.0
                     
                     # Process semantic orthogonality batch (only once per cluster size)
                     if "semantic_orthogonality" in rep_data and semantic_orthogonality_result is None:
@@ -388,7 +392,7 @@ def process_evaluation_batches():
             statistics = {}
             metrics_to_stat = [
                 'avg_accuracy', 'avg_f1', 'avg_precision', 'avg_recall', 'orthogonality',
-                'semantic_orthogonality_score', 'assigned_fraction', 'avg_confidence', 'final_score'
+                'semantic_orthogonality_score', 'avg_confidence', 'final_score'
             ]
 
             for metric in metrics_to_stat:
@@ -464,12 +468,12 @@ def print_evaluation_summary(results, method):
     print_and_flush(f"Optimal precision: {best_cluster['avg_precision']:.4f}")
     print_and_flush(f"Optimal recall: {best_cluster['avg_recall']:.4f}")
     print_and_flush(f"Optimal F1: {best_cluster['avg_f1']:.4f}")
-    print_and_flush(f"Optimal completeness: {best_cluster['completeness']:.4f}")
+    print_and_flush(f"Optimal completeness: {best_cluster['avg_confidence']:.4f}")
     print_and_flush(f"Optimal orthogonality: {best_cluster['orthogonality']:.4f}")
     print_and_flush(f"Optimal semantic orthogonality: {best_cluster['semantic_orthogonality']:.4f}")
     
     print_and_flush("\nMetrics for all cluster sizes:")
-    print_and_flush(f"{'Clusters':<10} {'Final':<8} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Complet':<8} {'Orthog':<8} {'SemOrth':<8}")
+    print_and_flush(f"{'Clusters':<10} {'Final':<8} {'Accuracy':<10} {'Precision':<11} {'Recall':<8} {'F1':<8} {'Conf':<8} {'Orthog':<8} {'SemOrth':<8}")
     print_and_flush(f"{'-'*10} {'-'*8} {'-'*10} {'-'*11} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8}")
     
     # Extract metrics for all cluster sizes from new format
@@ -486,7 +490,7 @@ def print_evaluation_summary(results, method):
         avg_precision = np.mean([rep['avg_precision'] for rep in all_repetitions])
         avg_recall = np.mean([rep['avg_recall'] for rep in all_repetitions])
         avg_f1 = np.mean([rep['avg_f1'] for rep in all_repetitions])
-        avg_completeness = np.mean([rep['assigned_fraction'] for rep in all_repetitions])
+        avg_confidence = np.mean([rep.get('avg_confidence', 0) for rep in all_repetitions])
         avg_orthogonality = np.mean([rep['orthogonality'] for rep in all_repetitions])
         avg_semantic_orthogonality = np.mean([rep['semantic_orthogonality_score'] for rep in all_repetitions])
         
@@ -494,7 +498,7 @@ def print_evaluation_summary(results, method):
         print_and_flush(f"{prefix}{n_clusters:<8} "
                 f"{avg_final_score:<8.4f} {avg_accuracy:<10.4f} {avg_precision:<11.4f} "
                 f"{avg_recall:<8.4f} {avg_f1:<8.4f} "
-                f"{avg_completeness:<8.4f} {avg_orthogonality:<8.4f} {avg_semantic_orthogonality:<8.4f}")
+                f"{avg_confidence:<8.4f} {avg_orthogonality:<8.4f} {avg_semantic_orthogonality:<8.4f}")
 
 def main():
     if args.command == "submit":
