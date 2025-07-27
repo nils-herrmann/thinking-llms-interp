@@ -60,5 +60,6 @@ for MODEL in $MODELS; do
         python visualize_results.py --model $MODEL --layer $LAYER --clusters $CLUSTERS
         python visualize_comparison.py --model $MODEL --layer $LAYER
     done
+    python visualize_clusters.py --model $MODEL
 done
 python visualize_clusters.py --model all

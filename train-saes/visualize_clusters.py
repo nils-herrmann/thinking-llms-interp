@@ -635,5 +635,5 @@ if __name__ == "__main__":
     if args.model == "all":
         visualize_all_models()
     else:
-        main(args.model)
+        main(args.model.split('/')[-1].lower())
 # %%
