@@ -70,12 +70,13 @@ def create_empty_results_json(clustering_method, model_id, layer, cluster_sizes)
     os.makedirs(results_dir, exist_ok=True)
     
     # Create the JSON file path
-    results_json_path = f"{results_dir}/{clustering_method}_results_{model_id}_layer{layer}.json"
+    model_short_name = model_id.split('/')[-1].lower()
+    results_json_path = f"{results_dir}/{clustering_method}_results_{model_short_name}_layer{layer}.json"
     
     # Create the basic structure with empty results for each cluster size
     results_data = {
         "clustering_method": clustering_method,
-        "model_id": f"full_model_path/{model_id}",  # Match expected format
+        "model_id": model_id,
         "layer": layer,
         "results_by_cluster_size": {}
     }
@@ -142,7 +143,7 @@ def submit_description_batches():
             # Create empty results JSON if cluster_sizes are specified
             if args.cluster_sizes is not None:
                 print_and_flush(f"Creating empty results file for {method} with cluster sizes {args.cluster_sizes}")
-                existing_results = create_empty_results_json(method, model_id, args.layer, args.cluster_sizes)
+                existing_results = create_empty_results_json(method, args.model, args.layer, args.cluster_sizes)
             else:
                 print_and_flush(f"No cluster sizes specified. Skipping {method}.")
                 continue
@@ -312,7 +313,7 @@ def process_description_batches():
             # Create empty results JSON if cluster_sizes are specified
             if args.cluster_sizes is not None:
                 print_and_flush(f"Creating empty results file for {method} with cluster sizes {args.cluster_sizes}")
-                existing_results = create_empty_results_json(method, model_id, args.layer, args.cluster_sizes)
+                existing_results = create_empty_results_json(method, args.model, args.layer, args.cluster_sizes)
             else:
                 print_and_flush(f"No cluster sizes specified. Skipping {method}.")
                 continue
@@ -441,7 +442,7 @@ def generate_descriptions_direct():
             # Create empty results JSON if cluster_sizes are specified
             if args.cluster_sizes is not None:
                 print_and_flush(f"Creating empty results file for {method} with cluster sizes {args.cluster_sizes}")
-                existing_results = create_empty_results_json(method, model_id, args.layer, args.cluster_sizes)
+                existing_results = create_empty_results_json(method, args.model, args.layer, args.cluster_sizes)
             else:
                 print_and_flush(f"No cluster sizes specified. Skipping {method}.")
                 continue

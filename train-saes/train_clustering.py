@@ -173,12 +173,13 @@ def create_empty_results_json(clustering_method, model_id, layer, training_resul
     os.makedirs(results_dir, exist_ok=True)
     
     # Create the JSON file path
-    results_json_path = f"{results_dir}/{clustering_method}_results_{model_id}_layer{layer}.json"
+    model_short_name = model_id.split('/')[-1].lower()
+    results_json_path = f"{results_dir}/{clustering_method}_results_{model_short_name}_layer{layer}.json"
     
     # Create the basic structure with empty results for each cluster size
     results_data = {
         "clustering_method": clustering_method,
-        "model_id": f"full_model_path/{model_id}",  # Match expected format
+        "model_id": model_id,
         "layer": layer,
         "results_by_cluster_size": {}
     }
@@ -239,7 +240,7 @@ for method in clustering_methods:
         current_results[method] = results
         
         # Create JSON file with empty results structure for title generation script
-        create_empty_results_json(method, model_id, args.layer, results)
+        create_empty_results_json(method, args.model, args.layer, results)
         
         print_and_flush(f"Successfully completed training for {method}")
     except Exception as e:
