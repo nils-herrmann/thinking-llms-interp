@@ -359,16 +359,16 @@ def process_description_batches():
                 
                 print_and_flush(f"  Processing repetition {rep_idx + 1} batch {batch_id}...")
                 
-                try:
-                    # Check batch status
-                    status = check_batch_status(batch_id)
-                    if status != "completed":
-                        print_and_flush(f"  Batch {batch_id} not completed (status: {status}). Skipping.")
-                        continue
-                    
-                    # Process batch results
-                    categories = process_cluster_descriptions_batch(batch_id, cluster_indices)
-                    
+                # Check batch status before processing
+                status = check_batch_status(batch_id)
+                if status != "completed":
+                    print_and_flush(f"  Batch {batch_id} not completed (status: {status}). Skipping.")
+                    continue
+                
+                # Process batch results
+                categories = process_cluster_descriptions_batch(batch_id, cluster_indices)
+                
+                if categories:
                     print_and_flush(f"  Generated descriptions for {len(categories)} clusters:")
                     for cluster_id, title, description in categories:
                         print_and_flush(f"    Cluster {cluster_id}: {title}")
@@ -376,11 +376,9 @@ def process_description_batches():
                     
                     all_categories.append(categories)
                     print_and_flush(f"  Successfully processed repetition {rep_idx + 1}")
-                    
-                except Exception as e:
-                    print_and_flush(f"  Error processing batch {batch_id}: {e}")
-                    continue
-            
+                else:
+                    print_and_flush(f"  No categories generated for batch {batch_id}. It may have failed or had no content.")
+
             # Update existing results with category information
             if all_categories and "results_by_cluster_size" in existing_results:
                 cluster_results = existing_results["results_by_cluster_size"].get(cluster_size, {})

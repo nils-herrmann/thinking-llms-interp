@@ -328,88 +328,82 @@ def process_evaluation_batches():
                 
                 rep_results = {}
                 
-                try:
-                    # Process accuracy batch
-                    if "accuracy" in rep_data:
-                        acc_batch_id = rep_data["accuracy"]["batch_id"]
-                        acc_metadata = rep_data["accuracy"]["metadata"]
-                        
-                        status = check_batch_status(acc_batch_id)
-                        if status == "completed":
-                            accuracy_results = process_accuracy_batch(acc_batch_id, acc_metadata)
+                # Process accuracy batch
+                if "accuracy" in rep_data and rep_data["accuracy"]["batch_id"]:
+                    acc_batch_id = rep_data["accuracy"]["batch_id"]
+                    acc_metadata = rep_data["accuracy"]["metadata"]
+                    
+                    status = check_batch_status(acc_batch_id)
+                    if status == "completed":
+                        accuracy_results = process_accuracy_batch(acc_batch_id, acc_metadata)
+                        if "avg" in accuracy_results:
                             rep_results["avg_accuracy"] = accuracy_results["avg"]["accuracy"]
                             rep_results["avg_f1"] = accuracy_results["avg"]["f1"]
                             rep_results["avg_precision"] = accuracy_results["avg"]["precision"]
                             rep_results["avg_recall"] = accuracy_results["avg"]["recall"]
                         else:
-                            print_and_flush(f"Accuracy batch {acc_batch_id} not completed (status: {status})")
+                            print_and_flush(f"Accuracy batch {acc_batch_id} processed with no 'avg' results.")
                             continue
-                    
-                    # Process completeness batch
-                    if "completeness" in rep_data:
-                        comp_batch_id = rep_data["completeness"]["batch_id"]
-                        comp_metadata = rep_data["completeness"]["metadata"]
-                        
-                        if comp_batch_id:  # Check if batch was actually submitted
-                            status = check_batch_status(comp_batch_id)
-                            if status == "completed":
-                                completeness_results = process_completeness_batch(comp_batch_id, comp_metadata)
-                                rep_results["avg_fit_score"] = completeness_results["avg_fit_score"]
-                                rep_results["avg_fit_score_by_cluster_id"] = completeness_results["avg_fit_score_by_cluster_id"]
-                                rep_results["completeness_responses"] = completeness_results["responses"]
-                                # Normalize completeness score to 0-1 scale for compatibility with final score calculation
-                                rep_results["avg_confidence"] = completeness_results["avg_fit_score"] / 10.0
-                            else:
-                                print_and_flush(f"Completeness batch {comp_batch_id} not completed (status: {status})")
-                                continue
-                        else:
-                            # Handle error case
-                            completeness_results = comp_metadata
-                            rep_results["avg_fit_score"] = completeness_results.get("avg_fit_score", 0.0)
-                            rep_results["avg_confidence"] = 0.0
-                    
-                    # Process semantic orthogonality batch (only once per cluster size)
-                    if "semantic_orthogonality" in rep_data and semantic_orthogonality_result is None:
-                        sem_batch_id = rep_data["semantic_orthogonality"]["batch_id"]
-                        sem_metadata = rep_data["semantic_orthogonality"]["metadata"]
-                        
-                        if sem_batch_id:  # Check if batch was actually submitted
-                            status = check_batch_status(sem_batch_id)
-                            if status == "completed":
-                                semantic_orthogonality_result = process_semantic_orthogonality_batch(sem_batch_id, sem_metadata)
-                            else:
-                                print_and_flush(f"Semantic orthogonality batch {sem_batch_id} not completed (status: {status})")
-                        else:
-                            # Handle single category case
-                            semantic_orthogonality_result = sem_metadata
-                    
-                    # Compute centroid orthogonality
-                    orthogonality = compute_centroid_orthogonality(cluster_centers)
-                    rep_results["orthogonality"] = orthogonality
-                    
-                    # Add semantic orthogonality results
-                    if semantic_orthogonality_result:
-                        rep_results["semantic_orthogonality_matrix"] = semantic_orthogonality_result["semantic_orthogonality_matrix"]
-                        rep_results["semantic_orthogonality_explanations"] = semantic_orthogonality_result["semantic_orthogonality_explanations"]
-                        rep_results["semantic_orthogonality_score"] = semantic_orthogonality_result["semantic_orthogonality_score"]
-                        rep_results["semantic_orthogonality_threshold"] = semantic_orthogonality_result["semantic_orthogonality_threshold"]
                     else:
-                        rep_results["semantic_orthogonality_score"] = 0.0
+                        print_and_flush(f"Accuracy batch {acc_batch_id} not completed (status: {status})")
+                        continue
+                
+                # Process completeness batch
+                if "completeness" in rep_data and rep_data["completeness"]["batch_id"]:
+                    comp_batch_id = rep_data["completeness"]["batch_id"]
+                    comp_metadata = rep_data["completeness"]["metadata"]
                     
-                    # Add categories (repetition-specific)
-                    rep_results["categories"] = categories
+                    status = check_batch_status(comp_batch_id)
+                    if status == "completed":
+                        completeness_results = process_completeness_batch(comp_batch_id, comp_metadata)
+                        rep_results["avg_fit_score"] = completeness_results.get("avg_fit_score", 0.0)
+                        rep_results["avg_fit_score_by_cluster_id"] = completeness_results.get("avg_fit_score_by_cluster_id", {})
+                        rep_results["completeness_responses"] = completeness_results.get("responses", [])
+                        # Normalize completeness score to 0-1 scale for compatibility with final score calculation
+                        rep_results["avg_confidence"] = completeness_results.get("avg_fit_score", 0.0) / 10.0
+                    else:
+                        print_and_flush(f"Completeness batch {comp_batch_id} not completed (status: {status})")
+                        continue
+                else:
+                    rep_results["avg_confidence"] = 0.0 # Default if no batch
+                
+                # Process semantic orthogonality batch (only once per cluster size)
+                if "semantic_orthogonality" in rep_data and semantic_orthogonality_result is None:
+                    sem_batch_id = rep_data["semantic_orthogonality"]["batch_id"]
+                    sem_metadata = rep_data["semantic_orthogonality"]["metadata"]
                     
-                    # Calculate final score
-                    final_score = (rep_results["avg_f1"] + rep_results["avg_confidence"] + rep_results["semantic_orthogonality_score"]) / 3
-                    rep_results["final_score"] = final_score
-                    
-                    all_results.append(rep_results)
-                    
-                    print_and_flush(f"  Processed repetition {rep_idx + 1}: final_score={final_score:.4f}")
-                    
-                except Exception as e:
-                    print_and_flush(f"Error processing repetition {rep_idx} for {method} {cluster_size}: {e}")
-                    continue
+                    if sem_batch_id:
+                        status = check_batch_status(sem_batch_id)
+                        if status == "completed":
+                            semantic_orthogonality_result = process_semantic_orthogonality_batch(sem_batch_id, sem_metadata)
+                        else:
+                            print_and_flush(f"Semantic orthogonality batch {sem_batch_id} not completed (status: {status})")
+                    else:
+                        semantic_orthogonality_result = sem_metadata
+                
+                # Compute centroid orthogonality
+                orthogonality = compute_centroid_orthogonality(cluster_centers)
+                rep_results["orthogonality"] = orthogonality
+                
+                # Add semantic orthogonality results
+                if semantic_orthogonality_result:
+                    rep_results["semantic_orthogonality_matrix"] = semantic_orthogonality_result.get("semantic_orthogonality_matrix", np.array([]).tolist())
+                    rep_results["semantic_orthogonality_explanations"] = semantic_orthogonality_result.get("semantic_orthogonality_explanations", {})
+                    rep_results["semantic_orthogonality_score"] = semantic_orthogonality_result.get("semantic_orthogonality_score", 0.0)
+                    rep_results["semantic_orthogonality_threshold"] = semantic_orthogonality_result.get("semantic_orthogonality_threshold", 0.0)
+                else:
+                    rep_results["semantic_orthogonality_score"] = 0.0
+                
+                # Add categories (repetition-specific)
+                rep_results["categories"] = categories
+                
+                # Calculate final score
+                final_score = (rep_results.get("avg_f1", 0.0) + rep_results.get("avg_confidence", 0.0) + rep_results.get("semantic_orthogonality_score", 0.0)) / 3
+                rep_results["final_score"] = final_score
+                
+                all_results.append(rep_results)
+                
+                print_and_flush(f"  Processed repetition {rep_idx + 1}: final_score={final_score:.4f}")
             
             if not all_results:
                 print_and_flush(f"No valid results for {method} with {n_clusters} clusters")
