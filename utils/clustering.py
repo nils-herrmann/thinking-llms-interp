@@ -1438,7 +1438,7 @@ def evaluate_clustering_scoring_metrics(texts, cluster_labels, n_clusters, examp
     statistics = {}
     metrics_to_stat = [
         'avg_accuracy', 'avg_f1', 'avg_precision', 'avg_recall', 'orthogonality',
-        'semantic_orthogonality_score', 'avg_fit_score', 'avg_confidence', 'final_score'
+        'semantic_orthogonality_score', 'avg_confidence', 'final_score'
     ]
 
     for metric in metrics_to_stat:
@@ -1547,8 +1547,7 @@ def save_clustering_results(model_id, layer, clustering_method, eval_results_by_
         "avg_precision": np.mean([repetition_result["avg_precision"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "avg_recall": np.mean([repetition_result["avg_recall"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "avg_f1": np.mean([repetition_result["avg_f1"] for repetition_result in best_cluster_eval_results["all_results"]]),
-        "avg_fit_score": np.mean([repetition_result["avg_fit_score"] for repetition_result in best_cluster_eval_results["all_results"]]),
-        "completeness": np.mean([repetition_result["avg_confidence"] for repetition_result in best_cluster_eval_results["all_results"]]),
+        "avg_completeness": np.mean([repetition_result["avg_confidence"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "orthogonality": np.mean([repetition_result["orthogonality"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "semantic_orthogonality": np.mean([repetition_result["semantic_orthogonality_score"] for repetition_result in best_cluster_eval_results["all_results"]]),
         "statistics": best_cluster_eval_results["statistics"]
