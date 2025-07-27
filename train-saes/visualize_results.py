@@ -21,7 +21,7 @@ parser.add_argument("--min_clusters", type=int, default=4,
                     help="Minimum number of clusters")
 parser.add_argument("--max_clusters", type=int, default=20,
                     help="Maximum number of clusters")
-parser.add_argument("--clusters", type=str, default="10,20,30,40,50",
+parser.add_argument("--clusters", type=int, nargs='+', default=[5,10,15,20,25,30,35,40,45,50],
                     help="Comma-separated list of cluster sizes to visualize")
 parser.add_argument("--clustering_methods", type=str, nargs='+', 
                     default=["gmm", "pca_gmm", "spherical_kmeans", "pca_kmeans", "agglomerative", "pca_agglomerative", "sae_topk"],
@@ -32,12 +32,12 @@ args, _ = parser.parse_known_args()
 model_id = args.model.split('/')[-1].lower()
 
 CLUSTERING_METHODS = {
-    # 'agglomerative',
-    # 'pca_agglomerative',
-    # 'gmm',
-    # 'pca_gmm',
-    # 'spherical_kmeans',
-    # 'pca_kmeans',
+    'agglomerative',
+    'pca_agglomerative',
+    'gmm',
+    'pca_gmm',
+    'spherical_kmeans',
+    'pca_kmeans',
     'sae_topk'
 }
 
@@ -72,7 +72,7 @@ def visualize_results(results_json_path, args):
     print(f"Cluster range available: {available_clusters}")
     
     # Filter to desired range from args.clusters
-    cluster_range_to_keep = [int(c) for c in args.clusters.split(",")]
+    cluster_range_to_keep = args.clusters
     cluster_range = [c for c in cluster_range_to_keep if c in available_clusters]
     
     if not cluster_range:
@@ -91,6 +91,7 @@ def visualize_results(results_json_path, args):
     
     # Extract data for each cluster count
     for n_clusters in cluster_range:
+        print(f"Loading cluster results for {n_clusters}")
         cluster_results = results_by_cluster_size[str(n_clusters)]
         all_repetitions = cluster_results['all_results']
         
