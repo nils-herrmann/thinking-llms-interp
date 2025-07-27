@@ -25,7 +25,7 @@ from utils.autograder_prompts import (
 )
 
 
-def submit_openai_batch(prompts_with_ids, batch_description="Clustering evaluation batch", model="gpt-4.1", temperature=1e-19, max_tokens=28000):
+def submit_openai_batch(prompts_with_ids, batch_description="Clustering evaluation batch", model="gpt-4.1", temperature=1e-19, max_tokens=28000, json_mode=False):
     """
     Submit a batch of prompts to OpenAI's batch API.
     
@@ -54,6 +54,8 @@ def submit_openai_batch(prompts_with_ids, batch_description="Clustering evaluati
         else:
             request_body["max_tokens"] = max_tokens
             request_body["temperature"] = temperature
+        if json_mode:
+            request_body["response_format"] = {"type": "json_object"}
 
         batch_requests.append({
             "custom_id": custom_id,
@@ -388,7 +390,8 @@ def accuracy_autograder_batch(sentences, categories, ground_truth_labels, n_auto
         prompts_with_ids, 
         "Accuracy evaluation",
         model=model,
-        max_tokens=4000
+        max_tokens=4000,
+        json_mode=True
     )
     
     return batch_id, metadata
@@ -600,7 +603,8 @@ def completeness_autograder_batch(sentences, cluster_labels, categories, model="
         prompts_with_ids, 
         "Completeness evaluation",
         model=model,
-        max_tokens=1000
+        max_tokens=1000,
+        json_mode=True
     )
     
     return batch_id, metadata
@@ -767,7 +771,8 @@ def compute_semantic_orthogonality_batch(categories, orthogonality_threshold=0.5
         prompts_with_ids, 
         "Semantic similarity evaluation",
         model=model,
-        max_tokens=1000
+        max_tokens=1000,
+        json_mode=True
     )
     
     print_and_flush(f"Submitted semantic orthogonality batch in {time.time() - start_time} seconds")
