@@ -345,7 +345,7 @@ Your response must follow this exact JSON format:
 ```json
 {{
   "explanation": "Detailed explanation of how well the sentence matches the category and your reasoning for the score",
-  "completeness_score": <integer from 1-10>
+  "completeness_score": <integer from 0-10>
 }}
 ```
 
