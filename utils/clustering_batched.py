@@ -532,8 +532,6 @@ def process_accuracy_batch(batch_id, metadata):
             "false_positives": false_positives,
             "true_negatives": true_negatives,
             "false_negatives": false_negatives,
-            "predictions": predictions,
-            "classifications": enhanced_classifications
         }
     
     # Calculate overall averages across all clusters

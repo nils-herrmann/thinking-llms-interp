@@ -732,8 +732,6 @@ def accuracy_autograder(sentences, categories, ground_truth_labels, model, n_aut
             "false_positives": false_positives,
             "true_negatives": true_negatives,
             "false_negatives": false_negatives,
-            "predictions": predictions,
-            "classifications": enhanced_classifications
         }
     
     # Calculate overall averages across all clusters
