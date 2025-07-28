@@ -32,9 +32,6 @@ def split_into_sentences(text):
     sentences = re.split(r'(?<=[.!?;])', text)
     return [sentence.strip() for sentence in sentences if sentence.strip()]
 
-def format_category_tag(title):
-    """Format category title into a tag"""
-    return title.lower().replace(" ", "-")
 
 def process_responses(responses_file, model, tokenizer, sae, layer, output_file, model_name):
     """Process responses and annotate thinking processes"""
@@ -111,15 +108,14 @@ def process_responses(responses_file, model, tokenizer, sae, layer, output_file,
             # Find the latent with highest activation
             top_latent_idx = torch.argmax(latent_activation.squeeze(0)).item()
             
-            # Get category title for this latent
-            category_title = latent_descriptions[top_latent_idx]['title']
+            # Use idx<number> instead of category title
             top_activation = round(latent_activation[0, top_latent_idx].item(), 2)
             
-            # Format category tag
-            category_tag = format_category_tag(category_title)
+            # Format idx tag
+            idx_tag = f"idx{top_latent_idx}"
             
             # Add to annotated thinking
-            annotated_thinking += f'["{top_activation}:{category_tag}"]{sentence}["end-section"]'
+            annotated_thinking += f'["{top_activation}:{idx_tag}"]{sentence}["end-section"]'
         
         # Create new annotated response item with only required fields
         annotated_item = {

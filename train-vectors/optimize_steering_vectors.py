@@ -386,20 +386,29 @@ def generate_bias_examples(responses_data, tokenizer, model, n_training_examples
     return final_examples
 
 def get_sorted_categories(responses_data):
-    """Extract all unique categories from responses data and return them sorted alphabetically"""
+    """Extract all unique categories from responses data and return them in order by idx number"""
     categories = set()
     
     for resp in responses_data:
         if not resp.get('annotated_thinking'):
             continue
             
-        # Extract category names from annotated thinking
+        # Extract category names from annotated thinking (now idx<number> format)
         matches = CATEGORY_PATTERN.finditer(resp['annotated_thinking'])
         for match in matches:
             category = match.group(1).strip()
             categories.add(category)
     
-    return sorted(list(categories))
+    # Sort by numerical index extracted from idx<number> format
+    def extract_idx(category_name):
+        if category_name.startswith('idx'):
+            try:
+                return int(category_name[3:])  # Extract number after 'idx'
+            except ValueError:
+                return float('inf')  # Put invalid formats at the end
+        return float('inf')  # Put non-idx formats at the end
+    
+    return sorted(list(categories), key=extract_idx)
 
 def test_on_example(model, tokenizer, vector, layer, test_example, max_new_tokens=50, steering_token_window=None, additional_vectors=None):
     """Test the optimized vector on an example.
