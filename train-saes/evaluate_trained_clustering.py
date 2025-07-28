@@ -281,8 +281,11 @@ def process_evaluation_batches():
                     if not rep_key.startswith("rep_"):
                         continue
                     for eval_type, batch_data in rep_data.items():
-                        if "batch_id" in batch_data:
+                        if isinstance(batch_data, dict) and "batch_id" in batch_data:
                             batch_id = batch_data["batch_id"]
+                            if not batch_id:
+                                print_and_flush(f"{method} {cluster_size} {rep_key} {eval_type}: No batch ID found")
+                                continue
                             status = check_batch_status(batch_id)
                             print_and_flush(f"{method} {cluster_size} {rep_key} {eval_type}: {batch_id} -> {status}")
                             if status != "completed":
