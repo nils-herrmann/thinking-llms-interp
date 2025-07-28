@@ -86,7 +86,8 @@ def visualize_results(results_json_path, args):
         'accuracy_scores': {'mean': [], 'min': [], 'max': []},
         'confidence_scores': {'mean': [], 'min': [], 'max': []},
         'orthogonality_scores': {'mean': [], 'min': [], 'max': []},
-        'semantic_orthogonality_scores': {'mean': [], 'min': [], 'max': []}
+        'semantic_orthogonality_scores': {'mean': [], 'min': [], 'max': []},
+        'recall_scores': {'mean': [], 'min': [], 'max': []}
     }
     
     # Extract data for each cluster count
@@ -102,6 +103,7 @@ def visualize_results(results_json_path, args):
         rep_confidence_scores = [rep['avg_confidence'] for rep in all_repetitions]  # This metric is called 'Completeness' in the plots
         rep_orthogonality_scores = [rep['orthogonality'] for rep in all_repetitions]
         rep_semantic_orthogonality_scores = [rep['semantic_orthogonality_score'] for rep in all_repetitions]
+        rep_recall_scores = [rep['avg_recall'] for rep in all_repetitions]
         
         # Calculate statistics across repetitions
         for metric_name, values in [
@@ -110,7 +112,8 @@ def visualize_results(results_json_path, args):
             ('accuracy_scores', rep_accuracy_scores),
             ('confidence_scores', rep_confidence_scores),
             ('orthogonality_scores', rep_orthogonality_scores),
-            ('semantic_orthogonality_scores', rep_semantic_orthogonality_scores)
+            ('semantic_orthogonality_scores', rep_semantic_orthogonality_scores),
+            ('recall_scores', rep_recall_scores)
         ]:
             metrics[metric_name]['mean'].append(np.mean(values))
             metrics[metric_name]['min'].append(np.min(values))
@@ -120,7 +123,7 @@ def visualize_results(results_json_path, args):
     optimal_n_clusters = int(results['best_cluster']['size'])
     
     # Create figure with 3x2 subplots
-    fig, axs = plt.subplots(3, 2, figsize=(15, 18))
+    fig, axs = plt.subplots(4, 2, figsize=(15, 24))
     
     # Define x-coordinates for vertical lines
     vertical_lines_x = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
@@ -202,6 +205,19 @@ def visualize_results(results_json_path, args):
         'green', 'Number of Clusters', 'Accuracy',
         'Autograder Accuracy vs. Number of Clusters'
     )
+    
+    # Average Recall - Bottom Right
+    plot_with_uncertainty(
+        axs[3, 0], cluster_range,
+        metrics['recall_scores']['mean'],
+        metrics['recall_scores']['min'],
+        metrics['recall_scores']['max'],
+        'cyan', 'Number of Clusters', 'Average Recall',
+        'Average Recall vs. Number of Clusters'
+    )
+    
+    # Hide the unused subplot
+    axs[3, 1].axis('off')
     
     # Add overall title
     method_name = method.capitalize()
