@@ -1415,6 +1415,7 @@ def evaluate_clustering_scoring_metrics(
             rep_results["avg_precision"] = accuracy_results["avg"]["precision"]
             rep_results["avg_recall"] = accuracy_results["avg"]["recall"]
             rep_results["accuracy_results_by_cluster"] = {k: v for k, v in accuracy_results.items() if k != "avg"}
+            accuracy_results = rep_results["accuracy_results_by_cluster"]
         else:
             if 'avg_accuracy' not in rep_results:
                 raise ValueError(f"Accuracy results not found for cluster size {n_clusters} rep {i} and --no-accuracy is set.")
