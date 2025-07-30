@@ -381,7 +381,7 @@ def process_evaluation_batches():
                             print_and_flush(f"Accuracy batch {acc_batch_id} not completed (status: {status})")
                             continue
                 elif 'avg_accuracy' not in rep_results and not args.no_accuracy:
-                    raise ValueError(f"Accuracy results not found for {method} {cluster_size} rep {rep_idx} and --no-accuracy is set.")
+                    print_and_flush(f"WARNING: Accuracy results not found for {method} {cluster_size} rep {rep_idx} and --no-accuracy is set.")
 
                 # Process completeness batch
                 if not args.no_completeness:
@@ -401,7 +401,7 @@ def process_evaluation_batches():
                             print_and_flush(f"Completeness batch {comp_batch_id} not completed (status: {status})")
                             continue
                 elif 'avg_confidence' not in rep_results and not args.no_completeness:
-                    raise ValueError(f"Completeness results not found for {method} {cluster_size} rep {rep_idx} and --no-completeness is set.")
+                    print_and_flush(f"WARNING: Completeness results not found for {method} {cluster_size} rep {rep_idx} and --no-completeness is set.")
 
                 # Process semantic orthogonality batch
                 if not args.no_sem_orth:
@@ -421,14 +421,14 @@ def process_evaluation_batches():
                             else:
                                 print_and_flush(f"Semantic orthogonality batch {sem_batch_id} not completed (status: {status})")
                 elif 'semantic_orthogonality_score' not in rep_results and not args.no_sem_orth:
-                    raise ValueError(f"Semantic orthogonality results not found for {method} {cluster_size} rep {rep_idx} and --no-sem-orth is set.")
+                    print_and_flush(f"WARNING: Semantic orthogonality results not found for {method} {cluster_size} rep {rep_idx} and --no-sem-orth is set.")
 
                 # Compute centroid orthogonality
                 if not args.no_orth:
                     orthogonality = compute_centroid_orthogonality(cluster_centers)
                     rep_results["orthogonality"] = orthogonality
                 elif 'orthogonality' not in rep_results:
-                    raise ValueError(f"Orthogonality results not found for {method} {cluster_size} rep {rep_idx} and --no-orth is set.")
+                    print_and_flush(f"WARNING: Orthogonality results not found for {method} {cluster_size} rep {rep_idx} and --no-orth is set.")
                 
                 # Add categories (repetition-specific)
                 rep_results["categories"] = categories
@@ -437,8 +437,12 @@ def process_evaluation_batches():
                 final_score_components = []
                 if "avg_f1" in rep_results:
                     final_score_components.append(rep_results["avg_f1"])
+                else:
+                    print_and_flush(f"WARNING WHEN COMPUTING FINAL SCORE: avg_f1 not found for {method} {cluster_size} rep {rep_idx} and --no-accuracy is set.")
                 if "avg_confidence" in rep_results:
                     final_score_components.append(rep_results["avg_confidence"])
+                else:
+                    print_and_flush(f"WARNING WHEN COMPUTING FINAL SCORE: avg_confidence not found for {method} {cluster_size} rep {rep_idx} and --no-completeness is set.")
 
                 if final_score_components:
                     final_score = sum(final_score_components) / len(final_score_components)
