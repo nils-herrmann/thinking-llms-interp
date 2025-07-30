@@ -325,19 +325,13 @@ Title: {title}
 Description: {description}
 
 # Instructions:
-1. Carefully analyze the sentence's functional role in a reasoning process.
-2. Compare this role to the category description provided.
-3. Consider how well the sentence exemplifies the described reasoning function.
+1. Carefully analyze the sentence's content and the functional role it might display in a reasoning process.
+2. Compare this content and role to the category description provided.
+3. Consider how well the sentence matches the category description.
 4. Provide a brief explanation of your reasoning.
 5. Rate the fit on a scale from 0-10, where:
    - 0 = Very poor fit, sentence does not match the category at all
-   - 3 = Poor fit, sentence somewhat relates but doesn't clearly demonstrate the function
-   - 5 = Moderate fit, sentence shows some aspects of the function but not clearly
-   - 7 = Good fit, sentence clearly demonstrates the function with minor issues
-   - 9 = Excellent fit, sentence is a clear and strong example of the function
-   - 10 = Perfect fit, sentence is an ideal textbook example of the function
-
-Focus on the functional match rather than surface-level topic similarity.
+   - 10 = Perfect fit, sentence matches exactly the category description
 
 # Response Format:
 Your response must follow this exact JSON format. The explanation must be a single-line string with no newlines:
