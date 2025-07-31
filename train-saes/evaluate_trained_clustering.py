@@ -36,8 +36,6 @@ parser.add_argument("--clustering_methods", type=str, nargs='+',
                     help="Clustering methods to evaluate")
 parser.add_argument("--load_in_8bit", action="store_true", default=False,
                     help="Load model in 8-bit mode")
-parser.add_argument("--re_compute_cluster_labels", action="store_true", default=False,
-                    help="Re-compute cluster labels and centers, and save them to the existing file")
 parser.add_argument("--n_autograder_examples", type=int, default=200,
                     help="Number of examples from each cluster to use for autograding")
 parser.add_argument("--n_completeness_examples", type=int, default=200,
@@ -142,15 +140,11 @@ def submit_evaluation_batches():
                 clustering_data = load_trained_clustering_data(model_id, args.layer, n_clusters, method)
                 cluster_centers = clustering_data['cluster_centers']
                 
-                # Predict cluster labels for current activations
-                if args.re_compute_cluster_labels:
-                    if method == 'sae_topk':
-                        cluster_labels = predict_clusters(all_activations, clustering_data, model_id, args.layer, n_clusters)
-                    else:
-                        cluster_labels = predict_clusters(all_activations, clustering_data)
-                    clustering_data['cluster_labels'] = cluster_labels
+                # Predict cluster labels for current activations (always recompute for consistency)
+                if method == 'sae_topk':
+                    cluster_labels = predict_clusters(all_activations, clustering_data, model_id, args.layer, n_clusters)
                 else:
-                    cluster_labels = clustering_data['cluster_labels']
+                    cluster_labels = predict_clusters(all_activations, clustering_data)
                 
                 # Get all categories from existing results (one set per repetition)
                 cluster_results = existing_results["results_by_cluster_size"].get(cluster_size, {})
