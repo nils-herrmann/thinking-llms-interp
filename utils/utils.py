@@ -240,10 +240,13 @@ def center_and_normalize_activations(all_activations, overall_mean):
     """Centers and normalizes activations."""
     
     print_and_flush(f"Centering activations...")
+    start_time = time.time()
     all_activations = [x - overall_mean for x in all_activations]
     all_activations = np.stack([a.reshape(-1) for a in all_activations])
     norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
     all_activations = all_activations / norms
+    end_time = time.time()
+    print(f"Centered and normalized activations in {end_time - start_time} seconds")
 
     return all_activations
 
