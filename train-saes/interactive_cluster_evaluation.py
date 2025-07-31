@@ -68,7 +68,7 @@ print(f"Model loaded successfully. Model type: {type(model)}")
 # %%
 # Process saved responses to get activations
 print("Processing saved responses...")
-all_activations, all_texts, overall_mean = utils.process_saved_responses(
+all_activations, all_texts = utils.process_saved_responses(
     MODEL_NAME, 
     N_EXAMPLES,
     model,
@@ -79,7 +79,6 @@ all_activations, all_texts, overall_mean = utils.process_saved_responses(
 print(f"Processed {len(all_activations)} activations")
 print(f"Activation shape: {all_activations[0].shape}")
 print(f"Number of texts: {len(all_texts)}")
-print(f"Overall mean shape: {overall_mean.shape}")
 
 # Clean up GPU memory
 del model, tokenizer
@@ -96,15 +95,7 @@ for i in range(sample_size):
     print("-"*100)
 
 # %%
-# Center and normalize activations
-print("Centering and normalizing activations...")
-all_activations = [x - overall_mean for x in all_activations]
-all_activations = np.stack([a.reshape(-1) for a in all_activations])
-norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
-all_activations = all_activations / norms
-
 print(f"Final activation matrix shape: {all_activations.shape}")
-print(f"Activation norms (should be ~1.0): min={np.min(norms):.4f}, max={np.max(norms):.4f}, mean={np.mean(norms):.4f}")
 
 # %%
 # Load trained clustering data

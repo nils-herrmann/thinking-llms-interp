@@ -209,20 +209,13 @@ model, tokenizer = utils.load_model(
 model_id = args.model.split("/")[-1].lower()
 
 # %% Process saved responses
-all_activations, all_texts, overall_mean = utils.process_saved_responses(
+all_activations, all_texts = utils.process_saved_responses(
     args.model, args.n_examples, model, tokenizer, args.layer
 )
 
 del model, tokenizer
 torch.cuda.empty_cache()
 gc.collect()
-
-# %% Center activations
-print_and_flush("Centering activations...")
-all_activations = [x - overall_mean for x in all_activations]
-all_activations = np.stack([a.reshape(-1) for a in all_activations])
-norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
-all_activations = all_activations / norms
 
 # %% Filter clustering methods based on args
 clustering_methods = [

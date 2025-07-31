@@ -162,7 +162,7 @@ def submit_description_batches():
     )
 
     # Process saved responses
-    all_activations, all_texts, overall_mean = utils.process_saved_responses(
+    all_activations, all_texts = utils.process_saved_responses(
         args.model, 
         args.n_examples,
         model,
@@ -173,13 +173,6 @@ def submit_description_batches():
     del model, tokenizer
     torch.cuda.empty_cache()
     gc.collect()
-
-    # Center activations
-    print_and_flush("Centering activations...")
-    all_activations = [x - overall_mean for x in all_activations]
-    all_activations = np.stack([a.reshape(-1) for a in all_activations])
-    norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
-    all_activations = all_activations / norms
     
     batch_info = {}
     
@@ -440,7 +433,7 @@ def generate_descriptions_direct():
     )
 
     # Process saved responses
-    all_activations, all_texts, overall_mean = utils.process_saved_responses(
+    all_activations, all_texts = utils.process_saved_responses(
         args.model, 
         args.n_examples,
         model,
@@ -451,13 +444,6 @@ def generate_descriptions_direct():
     del model, tokenizer
     torch.cuda.empty_cache()
     gc.collect()
-
-    # Center activations
-    print_and_flush("Centering activations...")
-    all_activations = [x - overall_mean for x in all_activations]
-    all_activations = np.stack([a.reshape(-1) for a in all_activations])
-    norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
-    all_activations = all_activations / norms
     
     # Process each clustering method
     for method in args.clustering_methods:

@@ -236,6 +236,17 @@ def get_char_to_token_map(text, tokenizer):
             
     return char_to_token
 
+def center_and_normalize_activations(all_activations, overall_mean):
+    """Centers and normalizes activations."""
+    
+    print_and_flush(f"Centering activations...")
+    all_activations = [x - overall_mean for x in all_activations]
+    all_activations = np.stack([a.reshape(-1) for a in all_activations])
+    norms = np.linalg.norm(all_activations, axis=1, keepdims=True)
+    all_activations = all_activations / norms
+
+    return all_activations
+
 def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_layers):
     """Load and process saved responses to get activations"""
 
@@ -343,8 +354,11 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
     for layer in uncached_layers:
         print(f"Found {len(activations_by_layer[layer])} sentences with activations for layer {layer} across {count_by_layer[layer]} examples")
         overall_running_mean = mean_by_layer[layer].cpu().numpy()
+
+        # Center and normalize activations
+        activations_by_layer[layer] = center_and_normalize_activations(activations_by_layer[layer], overall_running_mean)
         
-        result = (activations_by_layer[layer], texts_by_layer[layer], overall_running_mean)
+        result = (activations_by_layer[layer], texts_by_layer[layer])
         results_by_layer[layer] = result
         
         pickle_filename = f"../generate-responses/results/vars/activations_{model_id}_{n_examples}_{layer}.pkl"
