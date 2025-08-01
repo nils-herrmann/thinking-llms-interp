@@ -1464,6 +1464,10 @@ def evaluate_clustering_scoring_metrics(
             final_score_components.append(rep_results["avg_confidence"])
         else:
             print_and_flush(f"WARNING WHEN COMPUTING FINAL SCORE: avg_confidence not found for cluster size {n_clusters} rep {i} and --no-completeness is set.")
+        if "semantic_orthogonality_score" in rep_results:
+            final_score_components.append(rep_results["semantic_orthogonality_score"])
+        else:
+            print_and_flush(f"WARNING WHEN COMPUTING FINAL SCORE: semantic_orthogonality_score not found for cluster size {n_clusters} rep {i} and --no-sem-orth is set.")
 
         if final_score_components:
             final_score = sum(final_score_components) / len(final_score_components)
