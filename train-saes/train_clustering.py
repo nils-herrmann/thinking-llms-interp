@@ -25,12 +25,8 @@ parser.add_argument("--layer", type=int, default=12, help="Layer to analyze")
 parser.add_argument(
     "--n_examples", type=int, default=500, help="Number of examples to analyze"
 )
-parser.add_argument(
-    "--clusters",
-    type=str,
-    default="5,10,15,20,25,30,35,40,45,50",
-    help="Comma-separated list of cluster sizes to test",
-)
+parser.add_argument("--clusters", type=int, nargs='+', default=None,
+                    help="Specific cluster sizes to process")
 parser.add_argument(
     "--load_in_8bit",
     action="store_true",
@@ -125,7 +121,8 @@ def run_clustering_experiment(
     print_and_flush(f"\nRunning {clustering_method.upper()} clustering training...")
 
     # Define cluster range to test
-    cluster_range = [int(c) for c in args.clusters.split(",")]
+    assert args.clusters is not None, "Clusters must be specified"
+    cluster_range = [int(c) for c in args.clusters]
 
     print_and_flush(f"Training models for {len(cluster_range)} different cluster counts...")
 
