@@ -52,17 +52,19 @@ def load_sae_grid_search_results(model_id, method="sae_topk"):
                     
                     # Extract all repetitions for this cluster size
                     all_results = cluster_data.get("all_results", [])
+                    statistics = cluster_data.get("statistics", {})
                     
-                    if not all_results:
+                    if not all_results or not statistics:
                         print(f"Warning: No results found for layer {layer}, clusters {n_clusters}")
                         continue
                     
                     # Calculate average metrics across all repetitions
-                    avg_orthogonality = np.mean([rep.get("orthogonality", 0) for rep in all_results])
-                    avg_accuracy = np.mean([rep.get("avg_accuracy", 0) for rep in all_results])
-                    avg_f1 = np.mean([rep.get("avg_f1", 0) for rep in all_results])
-                    avg_completeness = np.mean([rep.get("assigned_fraction", 0) for rep in all_results])
-                    avg_final_score = np.mean([rep.get("final_score", 0) for rep in all_results])
+                    avg_orthogonality = statistics["orthogonality"]["mean"]
+                    avg_accuracy = statistics["avg_accuracy"]["mean"]
+                    avg_f1 = statistics["avg_f1"]["mean"]
+                    avg_completeness = statistics["avg_confidence"]["mean"]
+                    avg_semantic_orthogonality = statistics["semantic_orthogonality_score"]["mean"]
+                    avg_final_score = statistics["final_score"]["mean"]
                     
                     # Check for dead latents by examining detailed results from first repetition
                     has_dead_latents = False
@@ -83,6 +85,7 @@ def load_sae_grid_search_results(model_id, method="sae_topk"):
                         "layer": layer,
                         "n_clusters": n_clusters,
                         "orthogonality": avg_orthogonality,
+                        "semantic_orthogonality": avg_semantic_orthogonality,
                         "accuracy": avg_accuracy,
                         "f1": avg_f1,
                         "completeness": avg_completeness,
@@ -121,7 +124,7 @@ def visualize_grid_search(results_df, model_id, output_dir="results/figures"):
     os.makedirs(output_dir, exist_ok=True)
     
     # Define metrics to visualize
-    metrics = ["orthogonality", "f1", "accuracy", "completeness"]
+    metrics = ["avg_f1", "avg_confidence", "semantic_orthogonality_score", "final_score"]
     
     # Create a figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(20, 16))
@@ -280,6 +283,21 @@ def visualize_combined_grid_search(results_df, model_id, output_dir="results/fig
     """
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
+
+    # Define metrics to combine
+    metrics = ["avg_f1", "avg_confidence", "semantic_orthogonality_score"]
+    
+    # Normalize each metric to 0-1 range
+    for metric in metrics:
+        min_val = results_df[metric].min()
+        max_val = results_df[metric].max()
+        results_df[f"{metric}_norm"] = (results_df[metric] - min_val) / (max_val - min_val)
+        print(f"Metric: {metric}, Min: {min_val}, Max: {max_val}, Norm Min: {results_df[f'{metric}_norm'].min()}, Norm Max: {results_df[f'{metric}_norm'].max()}")
+    
+    # Calculate combined score (equal weight to all metrics)
+    results_df['normalized_final_score'] = (results_df['avg_f1_norm'] + 
+                                   results_df['avg_confidence_norm'] + 
+                                   results_df['semantic_orthogonality_score_norm']) / len(metrics)
     
     # Create figure - taller than wide
     plt.figure(figsize=(10, 14))
@@ -296,7 +314,7 @@ def visualize_combined_grid_search(results_df, model_id, output_dir="results/fig
     pivot = results_df.pivot_table(
         index='n_clusters', 
         columns='layer', 
-        values='final_score',
+        values='normalized_final_score',
         aggfunc='mean'
     )
     
@@ -331,13 +349,13 @@ def visualize_combined_grid_search(results_df, model_id, output_dir="results/fig
         center=0.5,
         vmin=0,
         vmax=1,
-        cbar_kws={'label': 'Final Score'},
+        cbar_kws={'label': 'Normalized Final Score'},
         annot_kws={"size": 14, "color": "black"}
     )
     
     # Increase colorbar label font size
     cbar = hm.collections[0].colorbar
-    cbar.ax.set_ylabel('Final Score', fontsize=16)
+    cbar.ax.set_ylabel('Normalized Final Score', fontsize=16)
     
     # Grey out cells with dead latents without adding text
     for i in range(pivot.shape[0]):
@@ -510,22 +528,27 @@ def visualize_all_models(output_dir="results/figures"):
     # Create a separate axis for the colorbar
     cbar_ax = fig.add_subplot(gs[0, -1])
     
-    # Initialize min/max values for global normalization
-    global_vmin = float('inf')
-    global_vmax = float('-inf')
-    
-    # First pass to find global min/max for normalization
-    all_scores = []
-    for model_id, results_df in model_results.items():
-        all_scores.extend(results_df['final_score'].values)
-    
     # Create visualizations for each model
     for j, (model_id, results_df) in enumerate(model_results.items()):
+        metrics = ["f1", "completeness", "semantic_orthogonality"]
+        for metric in metrics:
+            if metric not in results_df.columns:
+                raise ValueError(f"Metric {metric} not found in results for {model_id}. Columns: {results_df.columns}")
+            
+            min_val = results_df[metric].min()
+            max_val = results_df[metric].max()
+            results_df[f"{metric}_norm"] = (results_df[metric] - min_val) / (max_val - min_val)
+            print(f"Metric: {metric}, Min: {min_val}, Max: {max_val}, Norm Min: {results_df[f'{metric}_norm'].min()}, Norm Max: {results_df[f'{metric}_norm'].max()}")
+
+        results_df['normalized_final_score'] = (results_df['f1_norm'] + 
+                                   results_df['completeness_norm'] + 
+                                   results_df['semantic_orthogonality_norm']) / len(metrics)
+        
         # Create pivot table
         pivot = results_df.pivot_table(
             index='n_clusters', 
             columns='layer', 
-            values='final_score',
+            values='normalized_final_score',
             aggfunc='mean'
         )
         
@@ -616,7 +639,7 @@ def visualize_all_models(output_dir="results/figures"):
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = plt.colorbar(sm, cax=cbar_ax)
-    cbar.set_label('Final Score', fontsize=28)
+    cbar.set_label('Normalized Final Score', fontsize=28)
     cbar.ax.tick_params(labelsize=24)
     
     # Add overall title
