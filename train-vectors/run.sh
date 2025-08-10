@@ -9,7 +9,7 @@
 #     --use_activation_perplexity_selection
 
 
-for cluster in "$@"; do
+for cluster in {0..14}; do
     echo "Processing cluster: $cluster"
     python optimize_steering_vectors.py \
         --model meta-llama/Llama-3.1-8B \
@@ -22,7 +22,7 @@ for cluster in "$@"; do
         --use_activation_perplexity_selection
 done
 
-# python visualize_vector_losses.py --model meta-llama/Llama-3.1-8B
+python visualize_vector_losses.py --model meta-llama/Llama-3.1-8B
 
-# python evaluate_steering_vectors.py
+python evaluate_steering_vectors.py
 
