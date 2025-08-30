@@ -506,6 +506,7 @@ def clustering_sae_topk(activations, n_clusters, args, topk=3):
     patience = 10
     best_loss = float('inf')
     patience_counter = 0
+    best_model_state = None
     
     print_and_flush(f"Training sparse autoencoder with {n_clusters} clusters, topk={topk}...")
     for epoch in range(max_epochs):
@@ -566,14 +567,15 @@ def clustering_sae_topk(activations, n_clusters, args, topk=3):
             patience_counter += 1
             if patience_counter >= patience:
                 print_and_flush(f"Early stopping at epoch {epoch+1}")
-                
-                # Restore best model
-                sae.encoder.weight.data = best_model_state['encoder_weight']
-                sae.encoder.bias.data = best_model_state['encoder_bias']
-                sae.W_dec.data = best_model_state['decoder_weight']
-                sae.b_dec.data = best_model_state['b_dec']
-                    
                 break
+    
+    # After training, restore the best model state found
+    if best_model_state:
+        print_and_flush(f"Restoring best model with loss {best_loss:.6f}")
+        sae.encoder.weight.data = best_model_state['encoder_weight']
+        sae.encoder.bias.data = best_model_state['encoder_bias']
+        sae.W_dec.data = best_model_state['decoder_weight']
+        sae.b_dec.data = best_model_state['b_dec']
     
     # Use the encoder to determine cluster assignments - get the highest activating feature for each example
     sae.eval()
