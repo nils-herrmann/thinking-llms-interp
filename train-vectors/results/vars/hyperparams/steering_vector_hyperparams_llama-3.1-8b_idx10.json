@@ -10,9 +10,10 @@
     "context_sentences": 0,
     "seed": 42,
     "n_training_examples": 2048,
-    "vector_norm": 11.202404022216797,
+    "vector_norm": 18.625255584716797,
     "grad_clip": null,
-    "minibatch_size": 6,
+    "optim_minibatch_size": 4,
+    "base_gen_minibatch_size": 64,
     "steering_token_window": null
   }
 }
