@@ -85,7 +85,7 @@ def main(argv: Optional[List[str]] = None):
         args.model,
         device_map="auto",
         load_in_8bit=args.load_in_8bit,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
     )
     torch.set_default_device(base_model.device)
     for p in base_model.parameters():

@@ -327,7 +327,7 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
 
         # Detach and convert to float32
         for layer in uncached_layers:
-            layer_outputs[layer] = layer_outputs[layer].detach().to(torch.float32)
+            layer_outputs[layer] = layer_outputs[layer].detach().cpu().to(torch.float32)
             assert torch.isfinite(layer_outputs[layer]).all(), f"Layer {layer}: non-finite values after detach and to float32"
 
         char_to_token = get_char_to_token_map(full_response, tokenizer)
@@ -355,7 +355,7 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
                             f"Empty token slice at layer {layer}: token_start={token_start}, token_end={token_end}, "
                             f"sentence='{sentence[:80]}', full_response='{full_response[:200]}'"
                         )
-                        segment_activations = segment.mean(dim=1).cpu().numpy()
+                        segment_activations = segment.mean(dim=1).numpy()
                         assert np.isfinite(segment_activations).all(), f"Layer {layer}: non-finite values after numpy conversion"
                         
                         activations_by_layer[layer].append(segment_activations)
@@ -389,7 +389,7 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
     return results_by_layer
 
 
-def load_model(device="cuda:0", load_in_8bit=False, model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-8B"):
+def load_model(device="auto", load_in_8bit=False, model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-8B"):
     """
     Load model, tokenizer and mean vectors. Optionally compute feature vectors.
     
@@ -397,7 +397,7 @@ def load_model(device="cuda:0", load_in_8bit=False, model_name="deepseek-ai/Deep
         load_in_8bit (bool): If True, load the model in 8-bit mode
         model_name (str): Name/path of the model to load
     """
-    model = LanguageModel(model_name, dispatch=True, load_in_8bit=load_in_8bit, device_map=device, torch_dtype=torch.bfloat16)
+    model = LanguageModel(model_name, dispatch=True, load_in_8bit=load_in_8bit, device_map=device, dtype=torch.bfloat16)
     
     model.generation_config.temperature=None
     model.generation_config.top_p=None
