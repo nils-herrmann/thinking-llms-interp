@@ -539,6 +539,10 @@ def clustering_sae_topk(activations, n_clusters, args, topk=3):
             sae.set_decoder_norm_to_unit_norm()
             
             total_loss += loss.item() * len(batch_indices)
+
+            # Assert total_loss is not nan
+            if np.isnan(total_loss):
+                raise ValueError(f"Total loss is nan at epoch {epoch}")
             
             # Free up memory
             del batch_X, predicted, error, loss

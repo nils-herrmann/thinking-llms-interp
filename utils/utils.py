@@ -321,11 +321,14 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
             "attention_mask": (input_ids != tokenizer.pad_token_id).long()
         }) as tracer:
             for layer in uncached_layers:
-                layer_outputs[layer] = model.model.layers[layer].output.save()
+                saved_output = model.model.layers[layer].output.save()
+                assert torch.isfinite(saved_output).all(), f"Layer {layer}: non-finite values after save"
+                layer_outputs[layer] = saved_output
 
         # Detach and convert to float32
         for layer in uncached_layers:
             layer_outputs[layer] = layer_outputs[layer].detach().to(torch.float32)
+            assert torch.isfinite(layer_outputs[layer]).all(), f"Layer {layer}: non-finite values after detach and to float32"
 
         char_to_token = get_char_to_token_map(full_response, tokenizer)
         
@@ -347,7 +350,13 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
                         if token_end > max_token_end:
                             max_token_end = token_end
 
-                        segment_activations = layer_output[:, token_start - 1:token_end, :].mean(dim=1).cpu().numpy()
+                        segment = layer_output[:, token_start - 1:token_end, :]
+                        assert segment.shape[1] > 0, (
+                            f"Empty token slice at layer {layer}: token_start={token_start}, token_end={token_end}, "
+                            f"sentence='{sentence[:80]}', full_response='{full_response[:200]}'"
+                        )
+                        segment_activations = segment.mean(dim=1).cpu().numpy()
+                        assert np.isfinite(segment_activations).all(), f"Layer {layer}: non-finite values after numpy conversion"
                         
                         activations_by_layer[layer].append(segment_activations)
                         texts_by_layer[layer].append(sentence)
