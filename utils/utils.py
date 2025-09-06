@@ -1,6 +1,7 @@
 import dotenv
 dotenv.load_dotenv("../.env")
 
+import gc
 import torch
 from nnsight import LanguageModel
 import time
@@ -301,6 +302,13 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
     mean_by_layer = {layer: torch.zeros(1, model.config.hidden_size) for layer in uncached_layers}
     count_by_layer = {layer: 0 for layer in uncached_layers}
 
+    def clear_gpu_memory():
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+
+    clear_gpu_memory()
+
     print(f"Extracting activations for {n_examples} responses across layers {uncached_layers}...")
     for response_data in tqdm(responses_data):
         thinking_process = extract_thinking_process(response_data["full_response"])
@@ -365,6 +373,8 @@ def process_saved_responses(model_name, n_examples, model, tokenizer, layer_or_l
                 vector = layer_output[:, min_token_start:max_token_end, :].mean(dim=1).cpu()
                 mean_by_layer[layer] = mean_by_layer[layer] + (vector - mean_by_layer[layer]) / (count_by_layer[layer] + 1)
                 count_by_layer[layer] += 1
+
+        clear_gpu_memory()
 
     # Save results for each newly processed layer
     for layer in uncached_layers:
