@@ -312,7 +312,7 @@ def process_description_batches():
                     batch_id = rep_data["batch_id"]
                     status = check_batch_status(batch_id)
                     print_and_flush(f"{method} {cluster_size} {rep_key}: {batch_id} -> {status}")
-                    if status != "completed":
+                    if status not in ["completed", "expired", "cancelled"]:
                         all_completed = False
         
         if all_completed:
@@ -377,7 +377,7 @@ def process_description_batches():
                 
                 # Check batch status before processing
                 status = check_batch_status(batch_id)
-                if status != "completed":
+                if status not in ["completed", "expired", "cancelled"]:
                     print_and_flush(f"  Batch {batch_id} not completed (status: {status}). Skipping.")
                     continue
                 

@@ -107,7 +107,7 @@ def process_batch_results(batch_id):
     
     # Get batch status
     batch = client.batches.retrieve(batch_id)
-    if batch.status != "completed":
+    if batch.status not in ["completed", "expired", "cancelled"]:
         raise ValueError(f"Batch not completed. Current status: {batch.status}")
     
     results = {}

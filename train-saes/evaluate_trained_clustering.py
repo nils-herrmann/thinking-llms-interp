@@ -279,8 +279,9 @@ def process_evaluation_batches():
                                 continue
                             status = check_batch_status(batch_id)
                             print_and_flush(f"{method} {cluster_size} {rep_key} {eval_type}: {batch_id} -> {status}")
-                            if status != "completed":
+                            if status not in ["completed", "expired", "cancelled"]:
                                 all_completed = False
+                                break
         
         if all_completed:
             print_and_flush("All batches are completed. Processing...")
@@ -356,7 +357,7 @@ def process_evaluation_batches():
                         acc_metadata = rep_data["accuracy"]["metadata"]
                         
                         status = check_batch_status(acc_batch_id)
-                        if status == "completed":
+                        if status in ["completed", "expired", "cancelled"]:
                             accuracy_results = process_accuracy_batch(acc_batch_id, acc_metadata)
                             if "avg" in accuracy_results:
                                 rep_results["avg_accuracy"] = accuracy_results["avg"]["accuracy"]
@@ -380,7 +381,7 @@ def process_evaluation_batches():
                         comp_metadata = rep_data["completeness"]["metadata"]
                         
                         status = check_batch_status(comp_batch_id)
-                        if status == "completed":
+                        if status in ["completed", "expired", "cancelled"]:
                             completeness_results = process_completeness_batch(comp_batch_id, comp_metadata)
                             rep_results["avg_fit_score"] = completeness_results.get("avg_fit_score", 0.0)
                             rep_results["avg_fit_score_by_cluster_id"] = completeness_results.get("avg_fit_score_by_cluster_id", {})
@@ -401,7 +402,7 @@ def process_evaluation_batches():
                         
                         if sem_batch_id:
                             status = check_batch_status(sem_batch_id)
-                            if status == "completed":
+                            if status in ["completed", "expired", "cancelled"]:
                                 semantic_orthogonality_result = process_semantic_orthogonality_batch(sem_batch_id, sem_metadata)
                                 if semantic_orthogonality_result:
                                     rep_results["semantic_orthogonality_matrix"] = semantic_orthogonality_result.get("semantic_orthogonality_matrix", np.array([]).tolist())
