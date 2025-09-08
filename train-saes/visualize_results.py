@@ -231,7 +231,7 @@ def visualize_results(results_json_path, args):
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print_and_flush(f"Saved {method_name} summary visualization to {save_path}")
     
-    plt.show()
+    # plt.show()
 
 # %%
 

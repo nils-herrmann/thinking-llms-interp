@@ -285,7 +285,7 @@ def visualize_combined_grid_search(results_df, model_id, output_dir="results/fig
     os.makedirs(output_dir, exist_ok=True)
 
     # Define metrics to combine
-    metrics = ["avg_f1", "avg_confidence", "semantic_orthogonality_score"]
+    metrics = ["f1", "completeness", "semantic_orthogonality"]
     
     # Normalize each metric to 0-1 range
     for metric in metrics:
@@ -295,9 +295,9 @@ def visualize_combined_grid_search(results_df, model_id, output_dir="results/fig
         print(f"Metric: {metric}, Min: {min_val}, Max: {max_val}, Norm Min: {results_df[f'{metric}_norm'].min()}, Norm Max: {results_df[f'{metric}_norm'].max()}")
     
     # Calculate combined score (equal weight to all metrics)
-    results_df['normalized_final_score'] = (results_df['avg_f1_norm'] + 
-                                   results_df['avg_confidence_norm'] + 
-                                   results_df['semantic_orthogonality_score_norm']) / len(metrics)
+    results_df['normalized_final_score'] = (results_df['f1_norm'] + 
+                                   results_df['completeness_norm'] + 
+                                   results_df['semantic_orthogonality_norm']) / len(metrics)
     
     # Create figure - taller than wide
     plt.figure(figsize=(10, 14))
@@ -413,6 +413,7 @@ def main(model_id):
     """
     # Load grid search results
     results_df = load_sae_grid_search_results(model_id)
+    print(f"Column names: {results_df.columns}")
     
     if results_df is not None:
         # Print overview of available data

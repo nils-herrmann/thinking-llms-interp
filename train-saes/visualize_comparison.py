@@ -141,7 +141,7 @@ def visualize_method_comparison(model_id, layer, all_results):
     
     plt.tight_layout()
     plt.savefig(f'results/figures/method_comparison_{model_id}_layer{layer}.pdf')
-    plt.show()
+    # plt.show()
     
     print_and_flush(f"Saved comparison visualization to results/figures/method_comparison_{model_id}_layer{layer}.pdf")
 
