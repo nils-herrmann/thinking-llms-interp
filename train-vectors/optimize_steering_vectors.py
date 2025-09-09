@@ -646,9 +646,7 @@ def main():
 
     # Default responses path
     model_name_short = args.model.split('/')[-1].lower()
-    thinking_model_name = utils.model_mapping.get(args.model, model_name_short)
-    if thinking_model_name is None:
-        thinking_model_name = model_name_short
+    thinking_model_name = utils.model_mapping[args.model]
     thinking_model_short = thinking_model_name.split('/')[-1].lower()
     
     if args.use_synthetic_examples:

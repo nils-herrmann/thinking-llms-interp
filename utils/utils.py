@@ -607,6 +607,7 @@ model_mapping = {
     "meta-llama/Llama-3.1-8B":"deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
     "Qwen/Qwen2.5-Math-1.5B":"deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
     "Qwen/Qwen2.5-14B":"deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+    "Qwen/Qwen2.5-32B":"Qwen/QwQ-32B",
 }
 
 def split_into_sentences(text, min_words=3):
