@@ -291,8 +291,8 @@ def optimize_vector_simple(
         random.shuffle(idxs)
 
         running_loss, batches = 0.0, 0
-
-        for bs in range(0, len(idxs), optim_minibatch_size):
+        batch_pbar = tqdm(range(0, len(idxs), optim_minibatch_size), desc=f"batches {step+1}/{max_iters}", position=1, leave=False)
+        for bs in batch_pbar:
             batch = idxs[bs : bs + optim_minibatch_size]
 
             # Build *right‑padded* batch tensors
@@ -444,6 +444,7 @@ def optimize_vector_simple(
             del input_ids, attn_mask, shift_logits, shift_labels, active_logits, active_labels, out, logits
             torch.cuda.empty_cache()
 
+        batch_pbar.close()
         train_loss = running_loss / max(1, batches)
 
         # ---- Evaluation loss on eval set (if provided) ----
