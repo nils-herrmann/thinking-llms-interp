@@ -365,7 +365,7 @@ def optimize_vector_simple(
                 steering_slices.append(slice(start, L))
 
             # Hook for this batch
-            if steering_type == "resid_lora":
+            if steering_type == "linear":
                 def batch_hook(_m, args, slices=steering_slices, stat_vecs=static_vectors_local):
                     (x,) = args
                     v_local = vector.to(x)
@@ -381,7 +381,7 @@ def optimize_vector_simple(
                             for sv in stat_vecs_on_device:
                                 x[row, sl] += sv
                     return (x,)
-            else:
+            elif steering_type == "resid_lora":
                 def batch_hook(_m, args, slices=steering_slices, A_param=A, B_param=B, alpha_p=alpha_param, stat_loras=static_vectors_local):
                     (x,) = args
                     Al = A_param.to(x)
@@ -397,6 +397,8 @@ def optimize_vector_simple(
                                 al_s = l['alpha'].to(x)
                                 x[row, sl] = x[row, sl] + al_s * ((x[row, sl] @ Al_s) @ Bl_s)
                     return (x,)
+            else:
+                raise ValueError(f"Unknown steering_type: {steering_type}")
 
             with hf_hooks_contextmanager(model, [(layer, batch_hook)]):
                 out = model(input_ids=input_ids, attention_mask=attn_mask)
@@ -574,21 +576,40 @@ def optimize_vector_simple(
                         )
                         steering_slices_e.append(slice(start_e, L))
 
-                    def batch_hook_eval(_m, args, slices=steering_slices_e, stat_vecs=static_vectors_local):
-                        (x,) = args
-                        v_local = vector.to(x)
-                        stat_vecs_on_device = [sv.to(x.device) for sv in stat_vecs]
-                        for row, sl in enumerate(slices):
-                            if projection_clamp:
+                    if steering_type == "linear":
+                        def batch_hook_eval(_m, args, slices=steering_slices_e, stat_vecs=static_vectors_local):
+                            (x,) = args
+                            v_local = vector.to(x)
+                            stat_vecs_on_device = [sv.to(x.device) for sv in stat_vecs]
+                            for row, sl in enumerate(slices):
+                                if projection_clamp:
+                                    seg = x[row, sl]
+                                    coef = (seg @ v_local) / (v_local.norm() ** 2)
+                                    x[row, sl] = seg - coef.unsqueeze(-1) * v_local + v_local
+                                else:
+                                    x[row, sl] += v_local
+                                if stat_vecs_on_device:
+                                    for sv in stat_vecs_on_device:
+                                        x[row, sl] += sv
+                            return (x,)
+                    elif steering_type == "resid_lora":
+                        def batch_hook_eval(_m, args, slices=steering_slices_e, A_param=A, B_param=B, alpha_p=alpha_param, stat_loras=static_vectors_local):
+                            (x,) = args
+                            Al = A_param.to(x)
+                            Bl = B_param.to(x)
+                            al = alpha_p.to(x)
+                            for row, sl in enumerate(slices):
                                 seg = x[row, sl]
-                                coef = (seg @ v_local) / (v_local.norm() ** 2)
-                                x[row, sl] = seg - coef.unsqueeze(-1) * v_local + v_local
-                            else:
-                                x[row, sl] += v_local
-                            if stat_vecs_on_device:
-                                for sv in stat_vecs_on_device:
-                                    x[row, sl] += sv
-                        return (x,)
+                                x[row, sl] = seg + al * ((seg @ Al) @ Bl)
+                                if stat_loras:
+                                    for l in stat_loras:
+                                        Al_s = l['A'].to(x)
+                                        Bl_s = l['B'].to(x)
+                                        al_s = l['alpha'].to(x)
+                                        x[row, sl] = x[row, sl] + al_s * ((x[row, sl] @ Al_s) @ Bl_s)
+                            return (x,)
+                    else:
+                        raise ValueError(f"Unknown steering_type: {steering_type}")
 
                     with hf_hooks_contextmanager(model, [(layer, batch_hook_eval)]):
                         out_e = model(input_ids=input_ids_e, attention_mask=attn_mask_e)
@@ -626,21 +647,40 @@ def optimize_vector_simple(
                             )
                             steering_slices_be.append(slice(start_be, Lb))
 
-                        def batch_hook_base_eval(_m, args, slices=steering_slices_be, stat_vecs=static_vectors_local):
-                            (x,) = args
-                            v_local = vector.to(x)
-                            stat_vecs_on_device = [sv.to(x.device) for sv in stat_vecs]
-                            for row, sl in enumerate(slices):
-                                if projection_clamp:
+                        if steering_type == "linear":
+                            def batch_hook_base_eval(_m, args, slices=steering_slices_be, stat_vecs=static_vectors_local):
+                                (x,) = args
+                                v_local = vector.to(x)
+                                stat_vecs_on_device = [sv.to(x.device) for sv in stat_vecs]
+                                for row, sl in enumerate(slices):
+                                    if projection_clamp:
+                                        seg = x[row, sl]
+                                        coef = (seg @ v_local) / (v_local.norm() ** 2)
+                                        x[row, sl] = seg - coef.unsqueeze(-1) * v_local + v_local
+                                    else:
+                                        x[row, sl] += v_local
+                                    if stat_vecs_on_device:
+                                        for sv in stat_vecs_on_device:
+                                            x[row, sl] += sv
+                                return (x,)
+                        elif steering_type == "resid_lora":
+                            def batch_hook_base_eval(_m, args, slices=steering_slices_be, A_param=A, B_param=B, alpha_p=alpha_param, stat_loras=static_vectors_local):
+                                (x,) = args
+                                Al = A_param.to(x)
+                                Bl = B_param.to(x)
+                                al = alpha_p.to(x)
+                                for row, sl in enumerate(slices):
                                     seg = x[row, sl]
-                                    coef = (seg @ v_local) / (v_local.norm() ** 2)
-                                    x[row, sl] = seg - coef.unsqueeze(-1) * v_local + v_local
-                                else:
-                                    x[row, sl] += v_local
-                                if stat_vecs_on_device:
-                                    for sv in stat_vecs_on_device:
-                                        x[row, sl] += sv
-                            return (x,)
+                                    x[row, sl] = seg + al * ((seg @ Al) @ Bl)
+                                    if stat_loras:
+                                        for l in stat_loras:
+                                            Al_s = l['A'].to(x)
+                                            Bl_s = l['B'].to(x)
+                                            al_s = l['alpha'].to(x)
+                                            x[row, sl] = x[row, sl] + al_s * ((x[row, sl] @ Al_s) @ Bl_s)
+                                return (x,)
+                        else:
+                            raise ValueError(f"Unknown steering_type: {steering_type}")
 
                         with hf_hooks_contextmanager(model, [(layer, batch_hook_base_eval)]):
                             out_be = model(input_ids=input_ids_be, attention_mask=attn_mask_be)
@@ -687,8 +727,13 @@ def optimize_vector_simple(
             log_payload = {
                 'train_loss': train_loss,
                 'step': step,
-                'vector_norm': vector.norm().item(),
             }
+            if steering_type == 'linear':
+                log_payload['vector_norm'] = vector.norm().item()
+            elif steering_type == 'resid_lora':
+                log_payload['A_norm'] = A.norm().item()
+                log_payload['B_norm'] = B.norm().item()
+                log_payload['alpha'] = float(alpha_param.item())
             if eval_loss is not None:
                 log_payload['eval_loss'] = eval_loss
             wandb_run.log(log_payload, step=step)
