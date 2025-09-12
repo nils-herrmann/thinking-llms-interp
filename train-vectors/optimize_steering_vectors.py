@@ -11,6 +11,7 @@ import random
 import json
 import sys
 import os
+import pickle
 # Add the parent directory to the path to ensure we import from the correct utils
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import utils
@@ -244,39 +245,56 @@ def extract_examples_for_category(responses_data, category_name, tokenizer, n_tr
 
     print(f"Top {sample_size} examples by activation selected for perplexity ranking")
 
-    # 3. Calculate perplexity for each of these examples
-    print("Calculating perplexity for sampled examples...")
+    # 3. Calculate perplexity for each of these examples, with caching by steering index
+    model_name_short_local = args.model.split('/')[-1].lower()
+    vector_id_base = "bias" if args.steering_vector_idx == -1 else f"idx{args.steering_vector_idx}"
+    cache_dir = "results/vars/perplexity"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = f"{cache_dir}/perplexities_{model_name_short_local}_{vector_id_base}.pkl"
+
     examples_with_metrics = []
-    for example in tqdm(sampled_examples, desc="Computing perplexity"):
-        try:
-            # Tokenize the full sequence (prompt + target completion)
-            full_text = example['prompt'] + example['target_completion']
-            inputs = tokenizer(full_text, return_tensors='pt')
-            with torch.no_grad():
-                outputs = model(**inputs)
-                logits = outputs.logits[0]  # Remove batch dimension
-                prompt_tokens = tokenizer(example['prompt'], return_tensors='pt')['input_ids'][0]
-                prompt_len = len(prompt_tokens)
-                shift_logits = logits[:-1, :].contiguous()
-                shift_labels = inputs['input_ids'][0][1:].contiguous()
-                target_start = prompt_len - 1
-                target_end = len(shift_labels)
-                if target_start >= target_end or target_start < 0:
-                    continue
-                target_logits = shift_logits[target_start:target_end, :]
-                target_labels = shift_labels[target_start:target_end]
-                if target_logits.size(0) == 0:
-                    continue
-                loss = torch.nn.functional.cross_entropy(target_logits, target_labels, reduction='mean')
-                perplexity = torch.exp(loss).item()
-                examples_with_metrics.append({
-                    **example,
-                    'perplexity': perplexity,
-                    'activation': example['activation']
-                })
-        except Exception as e:
-            print(f"Error calculating perplexity for example: {e}")
-            continue
+    if os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
+            examples_with_metrics = pickle.load(f)
+        assert isinstance(examples_with_metrics, list) and all('perplexity' in ex for ex in examples_with_metrics), "Cached perplexities invalid format"
+        assert len(examples_with_metrics) >= sample_size, "Cached perplexities insufficient; delete the cache file to recompute"
+        print(f"Loaded cached perplexities from {cache_path}")
+
+    if not examples_with_metrics:
+        print("Calculating perplexity for sampled examples...")
+        for example in tqdm(sampled_examples, desc="Computing perplexity"):
+            try:
+                # Tokenize the full sequence (prompt + target completion)
+                full_text = example['prompt'] + example['target_completion']
+                inputs = tokenizer(full_text, return_tensors='pt')
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                    logits = outputs.logits[0]  # Remove batch dimension
+                    prompt_tokens = tokenizer(example['prompt'], return_tensors='pt')['input_ids'][0]
+                    prompt_len = len(prompt_tokens)
+                    shift_logits = logits[:-1, :].contiguous()
+                    shift_labels = inputs['input_ids'][0][1:].contiguous()
+                    target_start = prompt_len - 1
+                    target_end = len(shift_labels)
+                    if target_start >= target_end or target_start < 0:
+                        continue
+                    target_logits = shift_logits[target_start:target_end, :]
+                    target_labels = shift_labels[target_start:target_end]
+                    if target_logits.size(0) == 0:
+                        continue
+                    loss = torch.nn.functional.cross_entropy(target_logits, target_labels, reduction='mean')
+                    perplexity = torch.exp(loss).item()
+                    examples_with_metrics.append({
+                        **example,
+                        'perplexity': perplexity,
+                        'activation': example['activation']
+                    })
+            except Exception as e:
+                print(f"Error calculating perplexity for example: {e}")
+                continue
+        with open(cache_path, "wb") as f:
+            pickle.dump(examples_with_metrics, f)
+        print(f"Saved perplexities to {cache_path}")
 
     if not examples_with_metrics:
         print("No valid examples with perplexity found. Falling back to random sampling.")
@@ -365,30 +383,48 @@ def generate_bias_examples(responses_data, tokenizer, model, n_training_examples
     print(f"Presampled {sample_size} examples for perplexity ranking; computing perplexities…")
     examples_with_metrics = []
 
-    for ex in tqdm(presampled, desc="Computing perplexity"):
-        try:
-            full_txt = ex['prompt'] + ex['target_completion']
-            inputs = tokenizer(full_txt, return_tensors='pt')
-            with torch.no_grad():
-                outputs = model(**inputs.to(model.device))
-                logits = outputs.logits[0]
-                prompt_len = len(tokenizer(ex['prompt'], return_tensors='pt')['input_ids'][0])
-                shift_logits = logits[:-1, :].contiguous()
-                shift_labels = inputs['input_ids'][0][1:].contiguous()
-                tgt_start = prompt_len - 1
-                tgt_end = len(shift_labels)
-                if tgt_start >= tgt_end or tgt_start < 0:
-                    continue
-                tgt_logits = shift_logits[tgt_start:tgt_end, :]
-                tgt_labels = shift_labels[tgt_start:tgt_end]
-                if tgt_logits.size(0) == 0:
-                    continue
-                loss = torch.nn.functional.cross_entropy(tgt_logits, tgt_labels, reduction='mean')
-                ppl = torch.exp(loss).item()
-                examples_with_metrics.append({**ex, 'perplexity': ppl})
-        except Exception as e:
-            print(f"Error computing perplexity: {e}")
-            continue
+    # Caching for bias perplexities as well (steering idx -1)
+    model_name_short_local = args.model.split('/')[-1].lower()
+    vector_id_base = "bias" if args.steering_vector_idx == -1 else f"idx{args.steering_vector_idx}"
+    cache_dir = "results/vars/perplexity"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = f"{cache_dir}/perplexities_{model_name_short_local}_{vector_id_base}.pkl"
+
+    if os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
+            examples_with_metrics = pickle.load(f)
+        assert isinstance(examples_with_metrics, list) and all('perplexity' in ex for ex in examples_with_metrics), "Cached perplexities invalid format"
+        assert len(examples_with_metrics) >= sample_size, "Cached perplexities insufficient; delete the cache file to recompute"
+        print(f"Loaded cached perplexities from {cache_path}")
+
+    if not examples_with_metrics:
+        for ex in tqdm(presampled, desc="Computing perplexity"):
+            try:
+                full_txt = ex['prompt'] + ex['target_completion']
+                inputs = tokenizer(full_txt, return_tensors='pt')
+                with torch.no_grad():
+                    outputs = model(**inputs.to(model.device))
+                    logits = outputs.logits[0]
+                    prompt_len = len(tokenizer(ex['prompt'], return_tensors='pt')['input_ids'][0])
+                    shift_logits = logits[:-1, :].contiguous()
+                    shift_labels = inputs['input_ids'][0][1:].contiguous()
+                    tgt_start = prompt_len - 1
+                    tgt_end = len(shift_labels)
+                    if tgt_start >= tgt_end or tgt_start < 0:
+                        continue
+                    tgt_logits = shift_logits[tgt_start:tgt_end, :]
+                    tgt_labels = shift_labels[tgt_start:tgt_end]
+                    if tgt_logits.size(0) == 0:
+                        continue
+                    loss = torch.nn.functional.cross_entropy(tgt_logits, tgt_labels, reduction='mean')
+                    ppl = torch.exp(loss).item()
+                    examples_with_metrics.append({**ex, 'perplexity': ppl})
+            except Exception as e:
+                print(f"Error computing perplexity: {e}")
+                continue
+        with open(cache_path, "wb") as f:
+            pickle.dump(examples_with_metrics, f)
+        print(f"Saved perplexities to {cache_path}")
 
     if not examples_with_metrics:
         print("Perplexity computation failed for all examples; falling back to random selection.")
