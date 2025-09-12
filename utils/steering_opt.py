@@ -338,15 +338,16 @@ def optimize_vector_simple(
     loss_hist = []
     patience = 0
 
-    pbar = tqdm(range(max_iters), desc="")
+    total_pbar = tqdm(total=total_training_steps, desc="total", position=0, leave=True)
+    epoch_pbar = tqdm(range(max_iters), desc="", position=1, leave=False)
 
-    for step in pbar:
+    for step in epoch_pbar:
         # ----- minibatch shuffling -----
         idxs = list(range(len(prompts)))
         random.shuffle(idxs)
 
         running_loss, batches = 0.0, 0
-        batch_pbar = tqdm(range(0, len(idxs), optim_minibatch_size), desc=f"batches {step+1}/{max_iters}", position=1, leave=False)
+        batch_pbar = tqdm(range(0, len(idxs), optim_minibatch_size), desc=f"batches {step+1}/{max_iters}", position=2, leave=True)
         for bs in batch_pbar:
             batch = idxs[bs : bs + optim_minibatch_size]
 
@@ -550,6 +551,9 @@ def optimize_vector_simple(
             running_loss += loss.item()
             batches += 1
             loss_hist.append(loss.item())
+
+            # update total training progress (ETA across all batches)
+            total_pbar.update(1)
 
             # ---- lightweight cleanup to mitigate CUDA OOM ----
             del input_ids, attn_mask, shift_logits, shift_labels, active_logits, active_labels, out, logits
@@ -777,11 +781,12 @@ def optimize_vector_simple(
         torch.cuda.empty_cache()
 
         current_lr = optim.param_groups[0]["lr"]
-        pbar.set_description(
+        epoch_pbar.set_description(
             f"step {step} lr {current_lr:.2e} train {train_loss:.4f}"
         )
 
-    pbar.close()
+    epoch_pbar.close()
+    total_pbar.close()
 
     if steering_type == "linear":
         if best_vec is not None:
