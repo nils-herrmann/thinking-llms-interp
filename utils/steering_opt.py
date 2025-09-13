@@ -69,6 +69,72 @@ def make_batch_linear_hook(
     return hook_fn
 
 
+def make_batch_adaptive_linear_hook(
+    vector: torch.Tensor,
+    W1: torch.Tensor,
+    b1: torch.Tensor,
+    W2: torch.Tensor,
+    b2: torch.Tensor,
+    slices: List[slice],
+    static_vectors: list,
+    *,
+    projection_clamp: bool,
+):
+    """Create a forward_pre batch hook for *adaptive linear* steering.
+
+    Assumptions:
+    - `vector` is (d_model,)
+    - MLP parameters have shapes: W1: (d_model, hidden), b1: (hidden,), W2: (hidden, 1), b2: (1,)
+    - Each slice in `slices` indexes tokens dimension
+    - Output gate is per-token scalar in [0,1] via sigmoid
+    """
+
+    def hook_fn(_module, args):
+        (x,) = args
+        assert x.dim() == 3, "Expected hidden states of shape (batch, seq, d_model)"
+        d_model = x.shape[-1]
+
+        v_local = vector.to(x)
+        W1l = W1.to(x)
+        b1l = b1.to(x)
+        W2l = W2.to(x)
+        b2l = b2.to(x)
+
+        assert v_local.dim() == 1 and v_local.shape[0] == d_model, "vector must be 1-D of length d_model"
+        assert W1l.shape[0] == d_model and W2l.shape[1] == 1, "W1 must map d_model->hidden; W2 must map hidden->1"
+        assert b1l.dim() == 1 and b1l.shape[0] == W1l.shape[1], "b1 must be (hidden,)"
+        assert b2l.numel() == 1, "b2 must be scalar"
+
+        stat_vecs_on_device = [sv.to(x.device) for sv in static_vectors]
+        for sv in stat_vecs_on_device:
+            assert sv.dim() == 1 and sv.shape[0] == d_model, "static vector must be 1-D of length d_model"
+
+        for row, sl in enumerate(slices):
+            seg = x[row, sl]
+            # Shape assertions
+            assert seg.dim() == 2 and seg.shape[-1] == d_model, "segment must be (tokens, d_model)"
+            # Compute per-token gate g in [0,1]
+            h = torch.matmul(seg, W1l) + b1l  # (tokens, hidden)
+            h = torch.nn.functional.gelu(h)
+            g = torch.matmul(h, W2l) + b2l  # (tokens, 1)
+            g = torch.sigmoid(g).squeeze(-1)  # (tokens,)
+            assert g.dim() == 1 and g.shape[0] == seg.shape[0], "gate must be (tokens,)"
+
+            if projection_clamp:
+                coef = (seg @ v_local) / (v_local.norm() ** 2)
+                x[row, sl] = seg - coef.unsqueeze(-1) * v_local + g.unsqueeze(-1) * v_local
+            else:
+                x[row, sl] = seg + g.unsqueeze(-1) * v_local
+
+            if stat_vecs_on_device:
+                for sv in stat_vecs_on_device:
+                    x[row, sl] = x[row, sl] + sv
+
+        return (x,)
+
+    return hook_fn
+
+
 def make_batch_resid_lora_hook(
     A: torch.Tensor,
     B: torch.Tensor,
@@ -133,7 +199,7 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
 # 4.  Refactored helpers (pure logic; no behavior changes)
 # =============================================================
 
-def _init_steering_parameters(model, steering_type: str, starting_norm: float, rank: int):
+def _init_steering_parameters(model, steering_type: str, starting_norm: float, rank: int, adaptive_hidden: Optional[int] = None):
     """Initialize trainable steering parameters for the chosen parameterization."""
     d_model = model.config.hidden_size
     if steering_type == "linear":
@@ -142,6 +208,27 @@ def _init_steering_parameters(model, steering_type: str, starting_norm: float, r
         vector.requires_grad_(True)
         params_to_opt = [vector]
         return {"type": "linear", "vector": vector, "params": params_to_opt}
+    elif steering_type == "adaptive_linear":
+        hidden = adaptive_hidden if adaptive_hidden is not None else max(64, d_model // 16)
+        vector = torch.randn(d_model, device=model.device)
+        vector = starting_norm * vector / vector.norm()
+        W1 = torch.randn(d_model, hidden, device=model.device) / math.sqrt(d_model)
+        b1 = torch.zeros(hidden, device=model.device)
+        W2 = torch.randn(hidden, 1, device=model.device) / math.sqrt(hidden)
+        b2 = torch.zeros(1, device=model.device)
+        for p in (vector, W1, b1, W2, b2):
+            p.requires_grad_(True)
+        params_to_opt = [vector, W1, b1, W2, b2]
+        return {
+            "type": "adaptive_linear",
+            "vector": vector,
+            "W1": W1,
+            "b1": b1,
+            "W2": W2,
+            "b2": b2,
+            "hidden": hidden,
+            "params": params_to_opt,
+        }
     elif steering_type == "resid_lora":
         assert rank >= 1 and rank <= d_model, "Invalid LoRA rank"
         A = torch.randn(d_model, rank, device=model.device) / math.sqrt(d_model)
@@ -290,6 +377,10 @@ def _compute_base_objective_for_batch(
         batch_hook_base = make_batch_linear_hook(
             vector_or_lora, steering_slices_b, static_vectors_local, projection_clamp=projection_clamp
         )
+    elif steering_type == "adaptive_linear":
+        batch_hook_base = make_batch_adaptive_linear_hook(
+            vector_or_lora['vector'], vector_or_lora['W1'], vector_or_lora['b1'], vector_or_lora['W2'], vector_or_lora['b2'], steering_slices_b, static_vectors_local, projection_clamp=projection_clamp
+        )
     elif steering_type == "resid_lora":
         batch_hook_base = make_batch_resid_lora_hook(
             vector_or_lora['A'], vector_or_lora['B'], vector_or_lora['alpha'], steering_slices_b, static_vectors_local
@@ -364,6 +455,8 @@ def _compute_eval_loss(
             steering_slices_e.append(slice(start_e, L))
         if steering_type == "linear":
             batch_hook_eval = make_batch_linear_hook(vector_or_lora, steering_slices_e, static_vectors_local, projection_clamp=projection_clamp)
+        elif steering_type == "adaptive_linear":
+            batch_hook_eval = make_batch_adaptive_linear_hook(vector_or_lora['vector'], vector_or_lora['W1'], vector_or_lora['b1'], vector_or_lora['W2'], vector_or_lora['b2'], steering_slices_e, static_vectors_local, projection_clamp=projection_clamp)
         elif steering_type == "resid_lora":
             batch_hook_eval = make_batch_resid_lora_hook(vector_or_lora['A'], vector_or_lora['B'], vector_or_lora['alpha'], steering_slices_e, static_vectors_local)
         else:
@@ -472,8 +565,9 @@ def optimize_vector_simple(
     eval_prompts: Optional[list[str]] = None,
     eval_target_completions: Optional[list[str]] = None,
     # Unified steering controls
-    steering_type: str = "linear",  # "linear" or "resid_lora"
+    steering_type: str = "linear",  # "linear", "adaptive_linear" or "resid_lora"
     rank: int = 1,
+    adaptive_hidden: int = 128,
 ):
     """One‑stop promotion‑steering optimiser matching the paper’s details.
 
@@ -488,9 +582,17 @@ def optimize_vector_simple(
     # Evaluation logic removed; optimisation now relies only on training loss.
 
     # ---------------- Parameter initialisation ----------- #
-    init_payload = _init_steering_parameters(model, steering_type, starting_norm, rank)
+    init_payload = _init_steering_parameters(model, steering_type, starting_norm, rank, adaptive_hidden)
     if steering_type == "linear":
         vector = init_payload["vector"]
+        params_to_opt = init_payload["params"]
+    elif steering_type == "adaptive_linear":
+        vector = init_payload["vector"]
+        W1 = init_payload["W1"]
+        b1 = init_payload["b1"]
+        W2 = init_payload["W2"]
+        b2 = init_payload["b2"]
+        adaptive_hidden_local = init_payload["hidden"]
         params_to_opt = init_payload["params"]
     else:
         A = init_payload["A"]
@@ -606,7 +708,7 @@ def optimize_vector_simple(
     )
 
     # ---------------- Training loop --------------------- #
-    best_vec, best_lora, best_loss = None, None, float("inf")
+    best_vec, best_lora, best_adapt, best_loss = None, None, None, float("inf")
     loss_hist = []
     patience = 0
 
@@ -637,6 +739,8 @@ def optimize_vector_simple(
             # Hook for this batch
             if steering_type == "linear":
                 batch_hook = make_batch_linear_hook(vector, steering_slices, static_vectors_local, projection_clamp=projection_clamp)
+            elif steering_type == "adaptive_linear":
+                batch_hook = make_batch_adaptive_linear_hook(vector, W1, b1, W2, b2, steering_slices, static_vectors_local, projection_clamp=projection_clamp)
             elif steering_type == "resid_lora":
                 batch_hook = make_batch_resid_lora_hook(A, B, alpha_param, steering_slices, static_vectors_local)
             else:
@@ -653,7 +757,12 @@ def optimize_vector_simple(
             # ---- Base (unsteered) completion objective: -log(1 - p_base) on base tokens ----
             base_loss = 0.0
             if include_base_objective:
-                vector_or_lora = vector if steering_type == "linear" else {"A": A, "B": B, "alpha": alpha_param}
+                if steering_type == "linear":
+                    vector_or_lora = vector
+                elif steering_type == "adaptive_linear":
+                    vector_or_lora = {"vector": vector, "W1": W1, "b1": b1, "W2": W2, "b2": b2}
+                else:
+                    vector_or_lora = {"A": A, "B": B, "alpha": alpha_param}
                 base_loss = _compute_base_objective_for_batch(
                     model,
                     tokenizer,
@@ -692,6 +801,21 @@ def optimize_vector_simple(
                     if vector.norm() > max_norm:
                         with torch.no_grad():
                             vector.mul_(max_norm / vector.norm())
+                elif steering_type == "adaptive_linear":
+                    with torch.no_grad():
+                        v_norm = vector.norm()
+                        W1_norm = W1.norm()
+                        b1_norm = b1.norm()
+                        W2_norm = W2.norm()
+                        b2_norm = b2.norm()
+                        combined = torch.sqrt(v_norm*v_norm + W1_norm*W1_norm + b1_norm*b1_norm + W2_norm*W2_norm + b2_norm*b2_norm)
+                        if combined > max_norm:
+                            scale = max_norm / combined
+                            vector.mul_(scale)
+                            W1.mul_(scale)
+                            b1.mul_(scale)
+                            W2.mul_(scale)
+                            b2.mul_(scale)
                 elif steering_type == "resid_lora":
                     # Enforce a joint norm constraint over (A, B, alpha)
                     with torch.no_grad():
@@ -758,6 +882,10 @@ def optimize_vector_simple(
             }
             if steering_type == 'linear':
                 log_payload['vector_norm'] = vector.norm().item()
+            elif steering_type == 'adaptive_linear':
+                log_payload['vector_norm'] = vector.norm().item()
+                log_payload['W1_norm'] = W1.norm().item()
+                log_payload['W2_norm'] = W2.norm().item()
             elif steering_type == 'resid_lora':
                 log_payload['A_norm'] = A.norm().item()
                 log_payload['B_norm'] = B.norm().item()
@@ -771,6 +899,14 @@ def optimize_vector_simple(
             best_loss = metric
             if steering_type == "linear":
                 best_vec = vector.detach().clone()
+            elif steering_type == "adaptive_linear":
+                best_adapt = (
+                    vector.detach().clone(),
+                    W1.detach().clone(),
+                    b1.detach().clone(),
+                    W2.detach().clone(),
+                    b2.detach().clone(),
+                )
             else:
                 best_lora = (A.detach().clone(), B.detach().clone(), alpha_param.detach().clone())
             patience = 0
@@ -798,6 +934,13 @@ def optimize_vector_simple(
     if steering_type == "linear":
         if best_vec is not None:
             vector.data.copy_(best_vec)
+    elif steering_type == "adaptive_linear":
+        if best_adapt is not None:
+            vector.data.copy_(best_adapt[0])
+            W1.data.copy_(best_adapt[1])
+            b1.data.copy_(best_adapt[2])
+            W2.data.copy_(best_adapt[3])
+            b2.data.copy_(best_adapt[4])
     else:
         if best_lora is not None:
             A.data.copy_(best_lora[0])
@@ -807,6 +950,8 @@ def optimize_vector_simple(
     if wandb_run is not None:
         if steering_type == "linear":
             wandb_run.log({'final_vector_norm': vector.norm().item()})
+        elif steering_type == "adaptive_linear":
+            wandb_run.log({'final_vector_norm': vector.norm().item(), 'final_W1_norm': W1.norm().item(), 'final_W2_norm': W2.norm().item()})
         else:
             wandb_run.log({'final_A_norm': A.norm().item(), 'final_B_norm': B.norm().item(), 'final_alpha': float(alpha_param.item())})
 
@@ -820,6 +965,20 @@ def optimize_vector_simple(
                 eval_loss_history=eval_hist if (return_loss_history and have_eval) else None,
             )
             return vector, info
+        elif steering_type == "adaptive_linear":
+            combined_norm = (vector.norm()**2 + W1.norm()**2 + b1.norm()**2 + W2.norm()**2 + b2.norm()**2).sqrt().item()
+            info = dict(
+                iters=len(loss_hist),
+                final_loss=best_loss,
+                vector_norm=vector.norm().item(),
+                W1_norm=W1.norm().item(),
+                W2_norm=W2.norm().item(),
+                combined_norm=combined_norm,
+                hidden_dim=adaptive_hidden_local,
+                loss_history=loss_hist if return_loss_history else None,
+                eval_loss_history=eval_hist if (return_loss_history and have_eval) else None,
+            )
+            return {"vector": vector, "W1": W1, "b1": b1, "W2": W2, "b2": b2}, info
         else:
             info = dict(
                 iters=len(loss_hist),
@@ -831,7 +990,12 @@ def optimize_vector_simple(
                 eval_loss_history=eval_hist if (return_loss_history and have_eval) else None,
             )
             return {'A': A, 'B': B, 'alpha': alpha_param}, info
-    return vector if steering_type == "linear" else {'A': A, 'B': B, 'alpha': alpha_param}
+    if steering_type == "linear":
+        return vector
+    elif steering_type == "adaptive_linear":
+        return {"vector": vector, "W1": W1, "b1": b1, "W2": W2, "b2": b2}
+    else:
+        return {'A': A, 'B': B, 'alpha': alpha_param}
 
 
 # Evaluation helper removed.

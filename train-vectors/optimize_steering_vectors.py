@@ -68,10 +68,12 @@ parser.add_argument("--use_activation_perplexity_selection", action="store_true"
                     help="If set, use activation/perplexity-based selection. If not set, use random sampling over the full set.")
 parser.add_argument("--use_synthetic_examples", action="store_true", default=False,
                     help="If set, use synthetic training examples from synthetic_training_examples.json instead of generated responses")
-parser.add_argument("--steering_type", type=str, choices=["linear", "resid_lora"], default="linear",
-                    help="Type of steering to optimize: 'linear' steering vector or 'resid_lora' low-rank adapter")
+parser.add_argument("--steering_type", type=str, choices=["linear", "adaptive_linear", "resid_lora"], default="linear",
+                    help="Type of steering to optimize: 'linear' steering vector, 'adaptive_linear' MLP-gated vector, or 'resid_lora' low-rank adapter")
 parser.add_argument("--lora_rank", type=int, default=1,
                     help="Rank r for LoRA adapter when --steering_type=lora")
+parser.add_argument("--adaptive_hidden", type=int, default=128,
+                    help="Hidden dimension for adaptive_linear MLP gate")
 args, _ = parser.parse_known_args()
 
 # At module level
@@ -529,6 +531,15 @@ def test_on_example(model, tokenizer, vector, layer, test_example, max_new_token
             static_vecs = [v for v in additional_vectors if isinstance(v, torch.Tensor)]
             if static_vecs:
                 hooks.append((layer, steering_opt.make_batch_linear_hook(torch.zeros_like(vector), slices, static_vecs, projection_clamp=False)))
+    elif steering_type == "adaptive_linear":
+        assert isinstance(vector, dict) and all(k in vector for k in ("vector","W1","b1","W2","b2")), "adaptive_linear expects dict with vector,W1,b1,W2,b2"
+        hook = steering_opt.make_batch_adaptive_linear_hook(vector['vector'], vector['W1'], vector['b1'], vector['W2'], vector['b2'], slices, static_vectors=[], projection_clamp=False)
+        hooks.append((layer, hook))
+        if additional_vectors:
+            static_vecs = [v for v in additional_vectors if isinstance(v, torch.Tensor)]
+            if static_vecs:
+                # Attach extra static linear vectors alongside adaptive steering
+                hooks.append((layer, steering_opt.make_batch_linear_hook(torch.zeros_like(vector['vector']), slices, static_vecs, projection_clamp=False)))
     elif steering_type == "resid_lora":
         assert isinstance(vector, dict) and 'A' in vector and 'B' in vector and 'alpha' in vector, "LoRA steering expects a dict with 'A', 'B', and 'alpha'"
         static_loras = [v for v in (additional_vectors or []) if isinstance(v, dict)]
@@ -820,6 +831,12 @@ def main():
                         bias_vector = bias_dict.get("bias", None) if "bias" in bias_dict else None
                     elif isinstance(bias_dict, torch.Tensor):
                         bias_vector = bias_dict
+                elif args.steering_type == "adaptive_linear":
+                    # bias for adaptive acts as additional static linear vector (optional)
+                    if isinstance(bias_dict, dict) and "bias" in bias_dict and isinstance(bias_dict["bias"], torch.Tensor):
+                        bias_vector = bias_dict["bias"]
+                    elif isinstance(bias_dict, torch.Tensor):
+                        bias_vector = bias_dict
                 else:
                     if isinstance(bias_dict, dict):
                         candidate = bias_dict.get("bias", bias_dict)
@@ -880,12 +897,22 @@ def main():
                 static_vectors=static_vecs,
                 steering_type=args.steering_type,
                 rank=args.lora_rank,
+                adaptive_hidden=args.adaptive_hidden,
                 eval_prompts=eval_prompts,
                 eval_target_completions=eval_target_completions
             )
 
             if args.steering_type == "linear":
                 vect_to_store = params.detach().cpu()
+            elif args.steering_type == "adaptive_linear":
+                vect_to_store = {
+                    'vector': params['vector'].detach().cpu(),
+                    'W1': params['W1'].detach().cpu(),
+                    'b1': params['b1'].detach().cpu(),
+                    'W2': params['W2'].detach().cpu(),
+                    'b2': params['b2'].detach().cpu(),
+                    'hidden': args.adaptive_hidden,
+                }
             else:
                 vect_to_store = {
                     'A': params['A'].detach().cpu(),
@@ -956,6 +983,9 @@ def main():
     # Norm summary depends on steering type
     if args.steering_type == "linear":
         vector_norm_value = best_result['vector'].norm().item()
+    elif args.steering_type == "adaptive_linear":
+        v = best_result['vector']
+        vector_norm_value = float((v['vector'].norm()**2 + v['W1'].norm()**2 + v['W2'].norm()**2).sqrt().item())
     else:
         vA = best_result['vector']['A']
         vB = best_result['vector']['B']
@@ -977,6 +1007,7 @@ def main():
         "steering_token_window": args.steering_token_window,
         "steering_type": args.steering_type,
         "lora_rank": args.lora_rank if args.steering_type == "resid_lora" else None,
+        "adaptive_hidden": args.adaptive_hidden if args.steering_type == "adaptive_linear" else None,
     }
     # Use "bias" instead of steering_vector_idx in hyperparams filename
     save_hyperparameters(hyperparams, model_name_short, vector_id, target_category)
