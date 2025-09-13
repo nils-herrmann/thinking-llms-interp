@@ -8,6 +8,8 @@ import torch
 from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
+torch.autograd.set_detect_anomaly(True)
+
 # =============================================================
 # 1.  Context‑manager helpers
 # =============================================================
@@ -53,18 +55,20 @@ def make_batch_linear_hook(
         for sv in stat_vecs_on_device:
             assert sv.dim() == 1 and sv.shape[0] == d_model, "static vector must be 1-D of length d_model"
 
+        x_new = x.clone()
         for row, sl in enumerate(slices):
             seg = x[row, sl]
             if projection_clamp:
                 coef = (seg @ v_local) / (v_local.norm() ** 2)
-                x[row, sl] = seg - coef.unsqueeze(-1) * v_local + v_local
+                y = seg - coef.unsqueeze(-1) * v_local + v_local
             else:
-                x[row, sl] = seg + v_local
+                y = seg + v_local
             if stat_vecs_on_device:
                 for sv in stat_vecs_on_device:
-                    x[row, sl] = x[row, sl] + sv
+                    y = y + sv
+            x_new[row, sl] = y
 
-        return (x,)
+        return (x_new,)
 
     return hook_fn
 
@@ -109,6 +113,7 @@ def make_batch_adaptive_linear_hook(
         for sv in stat_vecs_on_device:
             assert sv.dim() == 1 and sv.shape[0] == d_model, "static vector must be 1-D of length d_model"
 
+        x_new = x.clone()
         for row, sl in enumerate(slices):
             seg = x[row, sl]
             # Shape assertions
@@ -122,15 +127,16 @@ def make_batch_adaptive_linear_hook(
 
             if projection_clamp:
                 coef = (seg @ v_local) / (v_local.norm() ** 2)
-                x[row, sl] = seg - coef.unsqueeze(-1) * v_local + g.unsqueeze(-1) * v_local
+                y = seg - coef.unsqueeze(-1) * v_local + g.unsqueeze(-1) * v_local
             else:
-                x[row, sl] = seg + g.unsqueeze(-1) * v_local
+                y = seg + g.unsqueeze(-1) * v_local
 
             if stat_vecs_on_device:
                 for sv in stat_vecs_on_device:
-                    x[row, sl] = x[row, sl] + sv
+                    y = y + sv
+            x_new[row, sl] = y
 
-        return (x,)
+        return (x_new,)
 
     return hook_fn
 
