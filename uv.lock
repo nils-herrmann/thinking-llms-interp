@@ -643,8 +643,8 @@ wheels = [
 
 [[package]]
 name = "chat-limiter"
-version = "0.12.0"
-source = { git = "https://github.com/FlyingPumba/chat-limiter.git#e3e182468c6cd6f6baefe7aa15d9484b8606030a" }
+version = "0.13.0"
+source = { git = "https://github.com/FlyingPumba/chat-limiter.git#8ea8926bcd7509e6b5a6d0d056e6ee8d53229249" }
 dependencies = [
     { name = "build" },
     { name = "httpx" },
