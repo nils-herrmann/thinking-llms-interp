@@ -72,7 +72,9 @@ def visualize_vector_losses(model_name, smoothing_sigma=1000000, steering_strate
     idx_and_files = []
     for lf in loss_files:
         m = re.search(rf'idx(\d+)_({re.escape(steering_strategy)})\.pt$', str(lf))
-        assert m is not None, f"Unexpected loss filename: {lf}"
+        if not m:
+            # Skip files from other strategies if present in the directory
+            continue
         idx_and_files.append((int(m.group(1)), lf))
     loss_files = [lf for idx, lf in sorted(idx_and_files, key=lambda t: t[0])]
     
@@ -172,7 +174,8 @@ def visualize_vector_losses(model_name, smoothing_sigma=1000000, steering_strate
         
         # Get the vector index from the filename
         m_file = re.search(rf'idx(\d+)_({re.escape(steering_strategy)})\.pt$', str(loss_file))
-        assert m_file is not None, f"Unexpected loss filename: {loss_file}"
+        if not m_file:
+            continue
         vec_idx = int(m_file.group(1))
         
         # Calculate the correct axis index for this plot
