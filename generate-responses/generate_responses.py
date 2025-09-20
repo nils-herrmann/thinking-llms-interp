@@ -10,6 +10,7 @@ import json
 import gc
 from messages import messages
 import utils.utils as utils
+from tqdm import tqdm
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Generate responses from models without steering vectors")
@@ -146,7 +147,7 @@ def process_messages(dataset_name, question_ids, messages_by_question_id, tokeni
         assert args.batch_size >= 1, f"batch_size must be >= 1, got {args.batch_size}"
 
         all_data = []
-        for start in range(0, len(question_ids), args.batch_size):
+        for start in tqdm(range(0, len(question_ids), args.batch_size)):
             sub_ids = question_ids[start:start + args.batch_size]
             messages_batch = [messages_by_question_id[qid] for qid in sub_ids]
             responses = process_model_output_batch_nnsight(messages_batch, tokenizer, model)
