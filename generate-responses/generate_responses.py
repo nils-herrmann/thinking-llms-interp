@@ -12,6 +12,8 @@ from messages import messages
 import utils.utils as utils
 from tqdm import tqdm
 
+MAX_TOKENS_IN_INPUT = 5000
+
 # Parse arguments
 parser = argparse.ArgumentParser(description="Generate responses from models without steering vectors")
 parser.add_argument("--model", type=str, default="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
@@ -50,6 +52,12 @@ def get_prompts(tokenizer, messages_list):
         prompts = [msg["content"] for msg in messages_list]
     else:
         prompts = [tokenizer.apply_chat_template([msg], tokenize=False, add_generation_prompt=True) for msg in messages_list]
+    prompts_above_max_tokens = [prompt for prompt in prompts if len(prompt) > MAX_TOKENS_IN_INPUT]
+    if len(prompts_above_max_tokens) > 0:
+        print(f"There are {len(prompts_above_max_tokens)} prompts above MAX_TOKENS_IN_INPUT")
+        for prompt in prompts_above_max_tokens:
+            print(f"Length: {len(prompt)}")
+        raise ValueError(f"There are {len(prompts_above_max_tokens)} prompts above MAX_TOKENS_IN_INPUT")
     return prompts
 
 def get_messages_from_dataset(dataset_name, rows) -> dict[str, dict[str, str]]:
@@ -191,7 +199,7 @@ if __name__ == "__main__":
             tensor_parallel_size=args.tensor_parallel_size if args.tensor_parallel_size != -1 else torch.cuda.device_count(),
             dtype=args.dtype,
             seed=args.seed,
-            max_model_len=args.max_tokens + 1000, # We assume inputs are 1000 tokens long at most
+            max_model_len=args.max_tokens + MAX_TOKENS_IN_INPUT, # We assume inputs are 1000 tokens long at most
         )
         tokenizer = AutoTokenizer.from_pretrained(model_name)
     else:
