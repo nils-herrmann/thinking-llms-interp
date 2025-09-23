@@ -22,7 +22,5 @@ for cluster in {0..9}; do
         --use_activation_perplexity_selection
 done
 
-python visualize_vector_losses.py --model meta-llama/Llama-3.3-70B-Instruct --smoothing_sigma 100 --steering_strategy linear
-
 python evaluate_steering_vectors.py --model meta-llama/Llama-3.3-70B-Instruct --steering_strategy linear
 

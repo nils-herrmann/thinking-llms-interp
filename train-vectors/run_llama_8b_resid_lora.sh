@@ -14,7 +14,5 @@ for cluster in {0..14}; do
         --lora_rank 1
 done
 
-python visualize_vector_losses.py --model meta-llama/Llama-3.1-8B --smoothing_sigma 100 --steering_strategy resid_lora
-
 python evaluate_steering_vectors.py --model meta-llama/Llama-3.1-8B --steering_strategy resid_lora
 
