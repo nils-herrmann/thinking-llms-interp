@@ -333,17 +333,22 @@ def hybrid_generate_token(
             window_size0 = abs(int(w0)) if int(w0) != 0 else 0
             with torch.inference_mode():
                 with base_model.trace(base_output_ids) as tracer:
-                    layer_out0 = base_model.model.layers[steering_layer].output[0]
+                    full_out0 = base_model.model.layers[steering_layer].output.save()
+                    assert full_out0.dim() == 3
+                    assert full_out0.shape[0] >= 1
+                    assert full_out0.shape[-1] == hidden_size_expected
+                    new_full0 = full_out0.clone()
                     if window_size0 > 0:
                         if bias_vec is not None:
-                            layer_out0[:, -window_size0:, :] += c0 * bias_vec
+                            new_full0[0, -window_size0:, :] += c0 * bias_vec
                         if steer_vec is not None:
-                            layer_out0[:, -window_size0:, :] += c0 * steer_vec
+                            new_full0[0, -window_size0:, :] += c0 * steer_vec
                     else:
                         if bias_vec is not None:
-                            layer_out0[:, :, :] += c0 * bias_vec
+                            new_full0[0, :, :] += c0 * bias_vec
                         if steer_vec is not None:
-                            layer_out0[:, :, :] += c0 * steer_vec
+                            new_full0[0, :, :] += c0 * steer_vec
+                    base_model.model.layers[steering_layer].output = new_full0
                     _last_logits_steered0 = base_model.lm_head.output[0, -1].save()
             # Initial steered candidate
             _last_logits_steered0 = _last_logits_steered0.detach().to("cpu")
@@ -371,17 +376,22 @@ def hybrid_generate_token(
                         window_size = abs(int(win)) if int(win) != 0 else 0
                         with torch.inference_mode():
                             with base_model.trace(base_output_ids) as tracer:
-                                layer_out = base_model.model.layers[steering_layer].output[0]
+                                full_out_c = base_model.model.layers[steering_layer].output.save()
+                                assert full_out_c.dim() == 3
+                                assert full_out_c.shape[0] >= 1
+                                assert full_out_c.shape[-1] == hidden_size_expected
+                                new_full_c = full_out_c.clone()
                                 if window_size > 0:
                                     if bias_vec is not None:
-                                        layer_out[:, -window_size:, :] += coef * bias_vec
+                                        new_full_c[0, -window_size:, :] += float(coef) * bias_vec
                                     if steer_vec is not None:
-                                        layer_out[:, -window_size:, :] += coef * steer_vec
+                                        new_full_c[0, -window_size:, :] += float(coef) * steer_vec
                                 else:
                                     if bias_vec is not None:
-                                        layer_out[:, :, :] += coef * bias_vec
+                                        new_full_c[0, :, :] += float(coef) * bias_vec
                                     if steer_vec is not None:
-                                        layer_out[:, :, :] += coef * steer_vec
+                                        new_full_c[0, :, :] += float(coef) * steer_vec
+                                base_model.model.layers[steering_layer].output = new_full_c
                                 _last_logits_steered_c = base_model.lm_head.output[0, -1].save()
                         _last_logits_steered_c = _last_logits_steered_c.detach().to("cpu")
                         tok_c, tok_c_str = get_token_and_string(
