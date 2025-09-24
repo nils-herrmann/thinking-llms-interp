@@ -99,6 +99,13 @@ def _result_suffix(args):
 def _is_ablation(args):
     return bool(getattr(args, "only_bias", False) or getattr(args, "random_firing", False) or getattr(args, "random_vectors", False))
 
+def _ablation_flags_str(args):
+    return (
+        f"only-bias={bool(getattr(args, 'only_bias', False))}, "
+        f"random-firing={bool(getattr(args, 'random_firing', False))}, "
+        f"random-vectors={bool(getattr(args, 'random_vectors', False))}"
+    )
+
 def get_next_token(logits, temperature, model, input_ids=None):
     """Get next token from logits using temperature sampling or greedy decoding (repetition penalty removed)"""
     if isinstance(logits, torch.Tensor):
@@ -274,6 +281,7 @@ def hybrid_generate_token(
         torch.cuda.empty_cache()
 
         if random_firing:
+            print("Ablation flag active: random-firing=True (sampling latent uniformly)")
             latent_id = int(torch.randint(low=0, high=len(latent_descriptions), size=(1,)).item())
             activation_value = 0.0
         else:
@@ -304,6 +312,7 @@ def hybrid_generate_token(
         if only_bias:
             assert bias_vec is not None, "Bias vector missing or wrong hidden size for base model"
         if random_vectors:
+            print("Ablation flag active: random-vectors=True (using random unit vector)")
             # Generate a random unit vector with correct shape/dtype/device
             rand_vec = torch.randn(hidden_size_expected, device=base_model.device, dtype=(bias_vector.dtype if (isinstance(bias_vector, torch.Tensor)) else torch.float32))
             rand_vec = rand_vec / (torch.norm(rand_vec) + 1e-12)
@@ -1046,6 +1055,10 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             torch.cuda.empty_cache()
             gc.collect()
 
+    if _is_ablation(args):
+        print(f"Ablation active: skipping standalone base/thinking generations for all tasks. Flags: {_ablation_flags_str(args)}")
+        assert int(args.n_cold_start_tokens) == 0, "Ablation runs require --n_cold_start_tokens 0"
+
     results = {
         "base_correct": 0,
         "thinking_correct": 0,
@@ -1104,45 +1117,59 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             return_tensors="pt"
         ).to(base_model.device).to(torch.long)
         
-        # Thinking model
-        print("Generating with Thinking Model...")
-        clear_gpu_memory()
-        with thinking_model.generate(thinking_input_ids, max_new_tokens=args.max_thinking_tokens, temperature=args.temperature, pad_token_id=thinking_tokenizer.eos_token_id) as gen:
-            thinking_outputs = thinking_model.generator.output.save()
-        thinking_response = thinking_tokenizer.decode(thinking_outputs[0][len(thinking_input_ids[0]):], skip_special_tokens=True)
-        results["thinking_answers"].append(thinking_response)
-        results["thinking_lengths"].append(len(thinking_response.split()))
-        # Track EOS termination
-        try:
-            thinking_eos_end = bool(int(thinking_outputs[0, -1].item()) == int(thinking_tokenizer.eos_token_id))
-        except Exception:
-            thinking_eos_end = False
-        results["thinking_eos"].append(thinking_eos_end)
+        # Thinking model (skip in ablation)
+        if _is_ablation(args):
+            print(f"Ablation: skipping thinking model generation ({_ablation_flags_str(args)})")
+            thinking_outputs = None
+            thinking_response = ""
+            results["thinking_answers"].append("")
+            results["thinking_lengths"].append(0)
+            results["thinking_eos"].append(False)
+        else:
+            print("Generating with Thinking Model...")
+            clear_gpu_memory()
+            with thinking_model.generate(thinking_input_ids, max_new_tokens=args.max_thinking_tokens, temperature=args.temperature, pad_token_id=thinking_tokenizer.eos_token_id) as gen:
+                thinking_outputs = thinking_model.generator.output.save()
+            thinking_response = thinking_tokenizer.decode(thinking_outputs[0][len(thinking_input_ids[0]):], skip_special_tokens=True)
+            results["thinking_answers"].append(thinking_response)
+            results["thinking_lengths"].append(len(thinking_response.split()))
+            # Track EOS termination
+            try:
+                thinking_eos_end = bool(int(thinking_outputs[0, -1].item()) == int(thinking_tokenizer.eos_token_id))
+            except Exception:
+                thinking_eos_end = False
+            results["thinking_eos"].append(thinking_eos_end)
 
-        # Base model
-        print("Generating with Base Model...")
-        clear_gpu_memory()
-        base_input_with_cold_start, _, cold_start_text = prepare_cold_start(
-            thinking_outputs,
-            thinking_input_ids,
-            base_input_ids,
-            thinking_tokenizer=thinking_tokenizer,
-            base_tokenizer=base_tokenizer,
-            n_cold_start_tokens=args.n_cold_start_tokens,
-        )
-        with base_model.generate(base_input_with_cold_start, max_new_tokens=args.max_new_tokens, temperature=args.temperature, pad_token_id=base_tokenizer.eos_token_id) as gen:
-            base_outputs = base_model.generator.output.save()
-        # Track EOS termination
-        try:
-            base_eos_end = bool(int(base_outputs[0, -1].item()) == int(base_tokenizer.eos_token_id))
-        except Exception:
-            base_eos_end = False
-        base_response = f"{cold_start_text}{base_tokenizer.decode(base_outputs[0][len(base_input_with_cold_start[0]):], skip_special_tokens=True)}"
-        del base_outputs, base_input_with_cold_start
-        clear_gpu_memory()
-        results["base_answers"].append(base_response)
-        results["base_lengths"].append(len(base_response.split()))
-        results["base_eos"].append(base_eos_end)
+        # Base model (skip in ablation)
+        if _is_ablation(args):
+            print(f"Ablation: skipping base model generation ({_ablation_flags_str(args)})")
+            results["base_answers"].append("")
+            results["base_lengths"].append(0)
+            results["base_eos"].append(False)
+        else:
+            print("Generating with Base Model...")
+            clear_gpu_memory()
+            base_input_with_cold_start, _, cold_start_text = prepare_cold_start(
+                thinking_outputs,
+                thinking_input_ids,
+                base_input_ids,
+                thinking_tokenizer=thinking_tokenizer,
+                base_tokenizer=base_tokenizer,
+                n_cold_start_tokens=args.n_cold_start_tokens,
+            )
+            with base_model.generate(base_input_with_cold_start, max_new_tokens=args.max_new_tokens, temperature=args.temperature, pad_token_id=base_tokenizer.eos_token_id) as gen:
+                base_outputs = base_model.generator.output.save()
+            # Track EOS termination
+            try:
+                base_eos_end = bool(int(base_outputs[0, -1].item()) == int(base_tokenizer.eos_token_id))
+            except Exception:
+                base_eos_end = False
+            base_response = f"{cold_start_text}{base_tokenizer.decode(base_outputs[0][len(base_input_with_cold_start[0]):], skip_special_tokens=True)}"
+            del base_outputs, base_input_with_cold_start
+            clear_gpu_memory()
+            results["base_answers"].append(base_response)
+            results["base_lengths"].append(len(base_response.split()))
+            results["base_eos"].append(base_eos_end)
         
         # Hybrid token-level
         print("Generating with Hybrid Approach (Token-Level)...")
@@ -1207,6 +1234,7 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
         # Evaluate answers
         print("\nEvaluating answers...")
         if _is_ablation(args):
+            print(f"Ablation: evaluating hybrid only ({_ablation_flags_str(args)})")
             thinking_correct, thinking_judge_raw = False, "SKIPPED"
             base_correct, base_judge_raw = False, "SKIPPED"
             hybrid_correct, hybrid_judge_raw = evaluate_answer(clean_hybrid_answer, correct_answer, question, "Hybrid Model")
@@ -1266,10 +1294,13 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             print(f"Gap recovered by hybrid: {max(0.0, recovered_now)*100:.1f}% of |Thinking-Base|")
         else:
             print("Gap recovered by hybrid: n/a")
-        base_eos_pct_now = (sum(results['base_eos']) / so_far) * 100 if so_far > 0 else 0.0
-        thinking_eos_pct_now = (sum(results['thinking_eos']) / so_far) * 100 if so_far > 0 else 0.0
         hybrid_eos_pct_now = (sum(results['hybrid_eos']) / so_far) * 100 if so_far > 0 else 0.0
-        print(f"EOS endings (%): base {base_eos_pct_now:.1f}, thinking {thinking_eos_pct_now:.1f}, hybrid {hybrid_eos_pct_now:.1f}")
+        if _is_ablation(args):
+            print(f"EOS endings (%): hybrid {hybrid_eos_pct_now:.1f}")
+        else:
+            base_eos_pct_now = (sum(results['base_eos']) / so_far) * 100 if so_far > 0 else 0.0
+            thinking_eos_pct_now = (sum(results['thinking_eos']) / so_far) * 100 if so_far > 0 else 0.0
+            print(f"EOS endings (%): base {base_eos_pct_now:.1f}, thinking {thinking_eos_pct_now:.1f}, hybrid {hybrid_eos_pct_now:.1f}")
         
         # Clean up to prevent memory leaks
         del thinking_input_ids, base_input_ids, thinking_outputs
