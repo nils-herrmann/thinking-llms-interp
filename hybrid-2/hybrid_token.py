@@ -299,8 +299,8 @@ def hybrid_generate_token(
             activation_value = latent_acts[latent_id].item()
             latent_key = latent_descriptions[latent_id]["key"]
         latent_title = latent_descriptions[latent_id]["title"]
-        # Only access learned steering vector when not using random-vectors
-        steering_vector = (None if random_vectors else steering_vectors.get(latent_key))
+        # Access steering vector for selected latent (random or learned, set at load time)
+        steering_vector = steering_vectors.get(latent_key)
         del latent_acts
         torch.cuda.empty_cache()
 
@@ -322,23 +322,16 @@ def hybrid_generate_token(
         )
         if only_bias:
             assert bias_vec is not None, "Bias vector missing or wrong hidden size for base model"
-        if random_vectors:
-            print("Ablation flag active: random-vectors=True (using random unit vector)")
-            # Generate a random unit vector with correct shape/dtype/device
-            rand_vec = torch.randn(hidden_size_expected, device=base_model.device, dtype=(bias_vector.dtype if (isinstance(bias_vector, torch.Tensor)) else torch.float32))
-            rand_vec = rand_vec / (torch.norm(rand_vec) + 1e-12)
-            steer_vec = None if only_bias else rand_vec
-        else:
-            steer_vec = (
-                None if only_bias else (
-                    steering_vector
-                    if (
-                        isinstance(steering_vector, torch.Tensor)
-                        and steering_vector.shape[-1] == hidden_size_expected
-                    )
-                    else None
+        steer_vec = (
+            None if only_bias else (
+                steering_vector
+                if (
+                    isinstance(steering_vector, torch.Tensor)
+                    and steering_vector.shape[-1] == hidden_size_expected
                 )
+                else None
             )
+        )
         # First compute the unsteered base token (save only last-step logits, then move to CPU)
         with torch.inference_mode():
             with base_model.trace(base_output_ids) as tracer:
@@ -730,6 +723,24 @@ def load_models_and_sae(args):
     print(f"Loading steering vectors and layer effects...")
     descriptions = get_latent_descriptions(thinking_model_id, args.sae_layer, args.n_clusters)
     steering_vectors = load_steering_vectors(base_model_id, thinking_model_id, args.sae_layer, args.n_clusters)
+    # If random-vectors ablation is active, replace latent vectors with fixed random ones per latent key
+    if bool(getattr(args, "random_vectors", False)):
+        print("Ablation flag active: random-vectors=True (fixed random vector per latent)")
+        hidden_size_expected = int(getattr(base_model.config, "hidden_size", 0))
+        assert hidden_size_expected > 0, "Base model hidden_size must be > 0"
+        new_vectors = {}
+        for _, desc in descriptions.items():
+            latent_key = desc.get("key", "")
+            if not latent_key:
+                continue
+            key = latent_key.lower().replace(" ", "-")
+            vec = torch.randn(hidden_size_expected, device="cpu", dtype=torch.float32)
+            vec = vec / (torch.norm(vec) + 1e-12)
+            new_vectors[key] = vec
+        # Preserve bias vector if present; otherwise ignore
+        if "bias" in steering_vectors:
+            new_vectors["bias"] = steering_vectors["bias"]
+        steering_vectors = new_vectors
     # Move steering vectors to base model device and dtype
     base_device = base_model.device
     base_dtype = next(base_model.parameters()).dtype if hasattr(base_model, "parameters") else torch.float32
@@ -1004,6 +1015,29 @@ def append_rolling_result(record: dict, args, base_model_id: str, thinking_model
     with open(path, "a") as f:
         f.write(json.dumps(record) + "\n")
 
+
+def _load_prev_counts(args, base_model_id: str, thinking_model_id: str):
+    """Load existing rolling results and return (n_completed, correct_counts dict)."""
+    path = _rolling_path(args, base_model_id, thinking_model_id)
+    if not os.path.exists(path):
+        return 0, {"thinking": 0, "base": 0, "hybrid": 0}
+    n = 0
+    counts = {"thinking": 0, "base": 0, "hybrid": 0}
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            judges = rec["judges"]
+            for k in ("thinking", "base", "hybrid"):
+                c = judges[k]["correct"]
+                assert isinstance(c, bool)
+                if c:
+                    counts[k] += 1
+            n += 1
+    return n, counts
+
 def analyze_hybrid_stats(token_latent_info, steering_selection):
     steered_count = steering_selection.count("steered")
     unsteered_count = steering_selection.count("unsteered")
@@ -1075,7 +1109,8 @@ def save_detailed_results(results, args, thinking_model_id, base_model_id):
     return detailed_data
 
 def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenizer, 
-                  sae, steering_vectors, descriptions, args, dataset, thinking_model_id, base_model_id):
+                  sae, steering_vectors, descriptions, args, dataset, thinking_model_id, base_model_id,
+                  prev_completed: int = 0, prev_counts: Optional[dict] = None):
 
     def clear_gpu_memory():
         if torch.cuda.is_available():
@@ -1306,16 +1341,23 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
         append_rolling_result(rolling_record, args, base_model_id, thinking_model_id)
 
         # Print current results
-        print(f"\nCurrent Results after {task_counter} tasks:")
+        if prev_counts is None:
+            prev_counts = {"thinking": 0, "base": 0, "hybrid": 0}
+        so_far_cum = prev_completed + task_counter
+        cum_thinking = prev_counts["thinking"] + results["thinking_correct"]
+        cum_base = prev_counts["base"] + results["base_correct"]
+        cum_hybrid = prev_counts["hybrid"] + results["hybrid_correct"]
+
+        print(f"\nCurrent Results after {so_far_cum} tasks (including {prev_completed} previous):")
         if not _is_ablation(args):
-            print(f"Thinking Model: {results['thinking_correct']}/{task_counter} correct ({results['thinking_correct']/task_counter*100:.1f}%)")
-            print(f"Base Model: {results['base_correct']}/{task_counter} correct ({results['base_correct']/task_counter*100:.1f}%)")
-        print(f"Hybrid Model: {results['hybrid_correct']}/{task_counter} correct ({results['hybrid_correct']/task_counter*100:.1f}%)")
+            print(f"Thinking Model: {cum_thinking}/{so_far_cum} correct ({(cum_thinking/so_far_cum)*100:.1f}%)")
+            print(f"Base Model: {cum_base}/{so_far_cum} correct ({(cum_base/so_far_cum)*100:.1f}%)")
+        print(f"Hybrid Model: {cum_hybrid}/{so_far_cum} correct ({(cum_hybrid/so_far_cum)*100:.1f}%)")
         # Concise gap recovery and EOS summary so far
-        so_far = task_counter
-        base_acc_now = results['base_correct'] / so_far * 100 if not _is_ablation(args) else 0.0
-        thinking_acc_now = results['thinking_correct'] / so_far * 100 if not _is_ablation(args) else 0.0
-        hybrid_acc_now = results['hybrid_correct'] / so_far * 100
+        so_far = so_far_cum
+        base_acc_now = (cum_base / so_far * 100) if not _is_ablation(args) else 0.0
+        thinking_acc_now = (cum_thinking / so_far * 100) if not _is_ablation(args) else 0.0
+        hybrid_acc_now = (cum_hybrid / so_far * 100)
         gap_now = abs(thinking_acc_now - base_acc_now) if not _is_ablation(args) else 0.0
         if gap_now > 0:
             recovered_now = (hybrid_acc_now - min(base_acc_now, thinking_acc_now)) / gap_now
@@ -1475,9 +1517,12 @@ if args.run_example:
 
 # %% Run evaluation
 print("\n===== Running Evaluation =====")
+# Load previous cumulative counts for printing
+prev_completed_count, prev_correct_counts = _load_prev_counts(args, base_model_id, thinking_model_id)
 results = run_evaluation(
     thinking_model, thinking_tokenizer, base_model, base_tokenizer,
-    sae, steering_vectors, descriptions, args, dataset, thinking_model_id, base_model_id
+    sae, steering_vectors, descriptions, args, dataset, thinking_model_id, base_model_id,
+    prev_completed=prev_completed_count, prev_counts=prev_correct_counts,
 )
 
 # Save detailed results
