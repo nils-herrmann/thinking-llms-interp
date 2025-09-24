@@ -34,9 +34,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate hybrid model on datasets (token-level steering)')
     parser.add_argument('--dataset', type=str, choices=['gsm8k', 'math500', "aime"], default='aime',
                       help='Dataset to evaluate on (gsm8k or math500)')
-    parser.add_argument('--thinking_model', type=str, default='Qwen/QwQ-32B', choices=['deepseek-ai/DeepSeek-R1-Distill-Llama-8B', 'Qwen/QwQ-32B'],
+    parser.add_argument('--thinking_model', type=str, default='Qwen/QwQ-32B',
                       help='Model for thinking/perplexity')
-    parser.add_argument('--base_model', type=str, default='Qwen/Qwen2.5-32B', choices=['meta-llama/Llama-3.1-8B', 'Qwen/Qwen2.5-32B'],
+    parser.add_argument('--base_model', type=str, default='Qwen/Qwen2.5-32B',
                       help='Model for base generation')
     parser.add_argument('--steering_layer', type=int, default=24,
                       help='Layer to steer in the base model')
