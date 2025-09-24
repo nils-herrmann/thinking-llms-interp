@@ -1,0 +1,1 @@
+python hybrid_token.py --dataset math500 --thinking_model deepseek-ai/DeepSeek-R1-Distill-Qwen-14B --base_model Qwen/Qwen2.5-14B --steering_layer 18  --sae_layer 38 --n_clusters 5 --max_new_tokens 2000
