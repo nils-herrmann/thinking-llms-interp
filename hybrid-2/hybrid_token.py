@@ -518,6 +518,9 @@ def load_steering_vectors(model_id, thinking_model_id, sae_layer, n_clusters):
     hyperparams_dir_abs = os.path.join(os.path.dirname(__file__), "../train-vectors/results/vars/hyperparams")
     vectors_dir_abs = os.path.join(os.path.dirname(__file__), "../train-vectors/results/vars/optimized_vectors")
 
+    if model_id == "qwen2.5-32b" and thinking_model_id == "deepseek-r1-distill-qwen-32b":
+        model_id = "qwen2.5-32b-on-deepseek-r1-distill-qwen-32b"
+
     # Build a mapping {category (e.g., "idx7" or "bias"): tensor} only for this model_id
     model_specific_vectors = {}
     try:
