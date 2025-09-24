@@ -515,13 +515,14 @@ def hybrid_generate_token(
         # 5) Book-keeping
         steering_selection.append(chosen)
         if collect_details:
+            logged_latent_title = ("Random Vector" if (chosen == "steered" and random_vectors) else latent_title)
             per_token_perplexity.append(token_perpl)
             token_position.append(len(token_latent_info))
             token_latent_info.append(
                 {
                     "token": next_tok_str,
                     "latent_id": latent_id if chosen == "steered" else None,
-                    "latent_title": latent_title if chosen == "steered" else "No Steering",
+                    "latent_title": logged_latent_title if chosen == "steered" else "No Steering",
                     "latent_key": latent_key if chosen == "steered" else None,
                     "activation_value": activation_value if chosen == "steered" else 0.0,
                     "perplexity": token_perpl,
@@ -658,6 +659,7 @@ def generate_latent_colors(latent_descriptions):
     colors["Cold Start"] = "#808080"
     colors["Fallback"] = "#CCCCCC"
     colors["No Steering"] = "#111111"
+    colors["Random Vector"] = "#ff00ff"
     return colors
 
 def visualize_generation_results(token_latent_info, steering_selection, per_token_perplexity, token_position, latent_colors):
@@ -979,12 +981,26 @@ Just answer YES if the model's answer is correct, or NO if it's incorrect. Nothi
     print(f"{model_name} evaluated locally as: {response}")
     return local_ok, response
 
-def append_rolling_result(record: dict, args, base_model_id: str, thinking_model_id: str):
+def _rolling_path(args, base_model_id: str, thinking_model_id: str) -> str:
+    """Build rolling results path for this run configuration."""
     os.makedirs(f"{args.results_dir}/rolling", exist_ok=True)
     if base_model_id == "qwen2.5-32b" and thinking_model_id == "deepseek-r1-distill-qwen-32b":
         base_model_id = "qwen2.5-32b-on-deepseek-r1-distill-qwen-32b"
     suffix = _result_suffix(args)
-    path = f"{args.results_dir}/rolling/rolling_{base_model_id}_{args.dataset}{suffix}.jsonl"
+    return f"{args.results_dir}/rolling/rolling_{base_model_id}_{args.dataset}{suffix}.jsonl"
+
+
+def _count_completed_tasks(args, base_model_id: str, thinking_model_id: str) -> int:
+    """Return number of already completed tasks by counting lines in rolling JSONL."""
+    path = _rolling_path(args, base_model_id, thinking_model_id)
+    if not os.path.exists(path):
+        return 0
+    with open(path, "r") as f:
+        return sum(1 for _ in f)
+
+
+def append_rolling_result(record: dict, args, base_model_id: str, thinking_model_id: str):
+    path = _rolling_path(args, base_model_id, thinking_model_id)
     with open(path, "a") as f:
         f.write(json.dumps(record) + "\n")
 
@@ -1427,6 +1443,18 @@ elif args.dataset == "math500":
 
 # %% Load models and SAE
 thinking_model, thinking_tokenizer, base_model, base_tokenizer, sae, steering_vectors, descriptions, thinking_model_id, base_model_id = load_models_and_sae(args)
+
+# %% Auto-resume from rolling results if present
+completed = _count_completed_tasks(args, base_model_id, thinking_model_id)
+if completed > 0:
+    total_available = len(dataset)
+    assert completed <= total_available, "Rolling file has more entries than dataset size"
+    if completed >= int(args.n_tasks):
+        print(f"Resume: {completed} tasks already completed (>= n_tasks {args.n_tasks}). Nothing to do.")
+        sys.exit(0)
+    print(f"Resume: found {completed} completed tasks. Starting from index {completed} and running {int(args.n_tasks) - int(completed)} more.")
+    args.eval_start_idx = int(completed)
+    args.n_tasks = int(args.n_tasks) - int(completed)
 
 # %% Run an example (optional)
 if args.run_example:
