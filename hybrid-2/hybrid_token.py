@@ -1017,12 +1017,17 @@ def append_rolling_result(record: dict, args, base_model_id: str, thinking_model
 
 
 def _load_prev_counts(args, base_model_id: str, thinking_model_id: str):
-    """Load existing rolling results and return (n_completed, correct_counts dict)."""
+    """Load existing rolling results and return (n_completed, correct_counts, eos_true_counts, eos_known_counts).
+
+    For EOS, only count entries that explicitly recorded EOS for each model into the known denominator.
+    """
     path = _rolling_path(args, base_model_id, thinking_model_id)
     if not os.path.exists(path):
-        return 0, {"thinking": 0, "base": 0, "hybrid": 0}
+        return 0, {"thinking": 0, "base": 0, "hybrid": 0}, {"thinking": 0, "base": 0, "hybrid": 0}, {"thinking": 0, "base": 0, "hybrid": 0}
     n = 0
     counts = {"thinking": 0, "base": 0, "hybrid": 0}
+    eos_counts = {"thinking": 0, "base": 0, "hybrid": 0}
+    eos_known = {"thinking": 0, "base": 0, "hybrid": 0}
     with open(path, "r") as f:
         for line in f:
             line = line.strip()
@@ -1035,8 +1040,14 @@ def _load_prev_counts(args, base_model_id: str, thinking_model_id: str):
                 assert isinstance(c, bool)
                 if c:
                     counts[k] += 1
+            eos = rec.get("eos", {})
+            for k in ("thinking", "base", "hybrid"):
+                if k in eos:
+                    eos_known[k] += 1
+                    if bool(eos.get(k, False)):
+                        eos_counts[k] += 1
             n += 1
-    return n, counts
+    return n, counts, eos_counts, eos_known
 
 def analyze_hybrid_stats(token_latent_info, steering_selection):
     steered_count = steering_selection.count("steered")
@@ -1329,6 +1340,11 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
                 "base": {"correct": bool(base_correct), "raw": base_judge_raw},
                 "hybrid": {"correct": bool(hybrid_correct), "raw": hybrid_judge_raw},
             },
+            "eos": {
+                "thinking": bool(results["thinking_eos"][-1]) if (not _is_ablation(args)) else False,
+                "base": bool(results["base_eos"][-1]) if (not _is_ablation(args)) else False,
+                "hybrid": bool(results["hybrid_eos"][-1]),
+            },
             "hybrid_details": {
                 "per_token": token_latent_info,
                 "steering_selection": steering_selection,
@@ -1364,13 +1380,33 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             print(f"Gap recovered by hybrid: {max(0.0, recovered_now)*100:.1f}% of |Thinking-Base|")
         else:
             print("Gap recovered by hybrid: n/a")
-        hybrid_eos_pct_now = (sum(results['hybrid_eos']) / so_far) * 100 if so_far > 0 else 0.0
+        # EOS percentages: show both this-run and cumulative when previous EOS exist
+        run_den = task_counter
+        hybrid_eos_pct_run = (sum(results['hybrid_eos']) / run_den) * 100 if run_den > 0 else 0.0
         if _is_ablation(args):
-            print(f"EOS endings (%): hybrid {hybrid_eos_pct_now:.1f}")
+            msg = f"EOS endings (% this run): hybrid {hybrid_eos_pct_run:.1f}"
+            if prev_completed > 0:
+                cum_den = prev_eos_known.get('hybrid', 0) + task_counter
+                cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
+                cum_pct = (cum_hybrid_eos / cum_den) * 100 if cum_den > 0 else 0.0
+                msg += f" | cumulative {cum_pct:.1f}"
+            print(msg)
         else:
-            base_eos_pct_now = (sum(results['base_eos']) / so_far) * 100 if so_far > 0 else 0.0
-            thinking_eos_pct_now = (sum(results['thinking_eos']) / so_far) * 100 if so_far > 0 else 0.0
-            print(f"EOS endings (%): base {base_eos_pct_now:.1f}, thinking {thinking_eos_pct_now:.1f}, hybrid {hybrid_eos_pct_now:.1f}")
+            base_eos_pct_run = (sum(results['base_eos']) / run_den) * 100 if run_den > 0 else 0.0
+            thinking_eos_pct_run = (sum(results['thinking_eos']) / run_den) * 100 if run_den > 0 else 0.0
+            msg = f"EOS endings (% this run): base {base_eos_pct_run:.1f}, thinking {thinking_eos_pct_run:.1f}, hybrid {hybrid_eos_pct_run:.1f}"
+            if prev_completed > 0:
+                cum_den_base = prev_eos_known.get('base', 0) + task_counter
+                cum_den_thinking = prev_eos_known.get('thinking', 0) + task_counter
+                cum_den_hybrid = prev_eos_known.get('hybrid', 0) + task_counter
+                cum_base_eos = prev_eos_counts.get('base', 0) + sum(results['base_eos'])
+                cum_thinking_eos = prev_eos_counts.get('thinking', 0) + sum(results['thinking_eos'])
+                cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
+                cum_base_pct = (cum_base_eos / cum_den_base) * 100 if cum_den_base > 0 else 0.0
+                cum_thinking_pct = (cum_thinking_eos / cum_den_thinking) * 100 if cum_den_thinking > 0 else 0.0
+                cum_hybrid_pct = (cum_hybrid_eos / cum_den_hybrid) * 100 if cum_den_hybrid > 0 else 0.0
+                msg += f" | cumulative base {cum_base_pct:.1f}, thinking {cum_thinking_pct:.1f}, hybrid {cum_hybrid_pct:.1f}"
+            print(msg)
         
         # Clean up to prevent memory leaks
         del thinking_input_ids, base_input_ids, thinking_outputs
@@ -1518,7 +1554,7 @@ if args.run_example:
 # %% Run evaluation
 print("\n===== Running Evaluation =====")
 # Load previous cumulative counts for printing
-prev_completed_count, prev_correct_counts = _load_prev_counts(args, base_model_id, thinking_model_id)
+prev_completed_count, prev_correct_counts, prev_eos_counts, prev_eos_known = _load_prev_counts(args, base_model_id, thinking_model_id)
 results = run_evaluation(
     thinking_model, thinking_tokenizer, base_model, base_tokenizer,
     sae, steering_vectors, descriptions, args, dataset, thinking_model_id, base_model_id,
