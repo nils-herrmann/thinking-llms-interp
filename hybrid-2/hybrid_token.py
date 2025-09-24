@@ -76,11 +76,28 @@ def parse_args():
                       help='Keep per-token arrays in RAM during eval (uses more memory)')
     parser.add_argument('--only-bias', action='store_true', default=False,
                       help='If set, use only the bias vector for steering (no other latents)')
+    parser.add_argument('--random-firing', action='store_true', default=False,
+                      help='If set, randomly select which latent to fire each token (bypass oracle)')
+    parser.add_argument('--random-vectors', action='store_true', default=False,
+                      help='If set, steer using random unit vectors (correct shape), ignoring trained vectors')
     args = parser.parse_known_args()[0]
     # Special handling: if [1] is provided, treat as "all tokens"
     if isinstance(args.token_windows, list) and len(args.token_windows) == 1 and int(args.token_windows[0]) == 1:
         args.token_windows = [0]
     return args
+
+def _result_suffix(args):
+    s = ""
+    if getattr(args, "only_bias", False):
+        s += "_bias-only"
+    if getattr(args, "random_firing", False):
+        s += "_random-firing"
+    if getattr(args, "random_vectors", False):
+        s += "_random-vectors"
+    return s
+
+def _is_ablation(args):
+    return bool(getattr(args, "only_bias", False) or getattr(args, "random_firing", False) or getattr(args, "random_vectors", False))
 
 def get_next_token(logits, temperature, model, input_ids=None):
     """Get next token from logits using temperature sampling or greedy decoding (repetition penalty removed)"""
@@ -203,6 +220,8 @@ def hybrid_generate_token(
     disagreement_only: bool = True,
     collect_details: bool = True,
     only_bias: bool = False,
+    random_firing: bool = False,
+    random_vectors: bool = False,
 ):
     """Per-token variant of hybrid generation.
 
@@ -254,10 +273,14 @@ def hybrid_generate_token(
         del activation_curr
         torch.cuda.empty_cache()
 
-        latent_id = torch.argmax(latent_acts).item()
+        if random_firing:
+            latent_id = int(torch.randint(low=0, high=len(latent_descriptions), size=(1,)).item())
+            activation_value = 0.0
+        else:
+            latent_id = torch.argmax(latent_acts).item()
+            activation_value = latent_acts[latent_id].item()
         latent_title = latent_descriptions[latent_id]["title"]
         latent_key = latent_descriptions[latent_id]["key"]
-        activation_value = latent_acts[latent_id].item()
         steering_vector = steering_vectors[latent_key]
         del latent_acts
         torch.cuda.empty_cache()
@@ -280,16 +303,22 @@ def hybrid_generate_token(
         )
         if only_bias:
             assert bias_vec is not None, "Bias vector missing or wrong hidden size for base model"
-        steer_vec = (
-            None if only_bias else (
-                steering_vector
-                if (
-                    hasattr(steering_vector, "shape")
-                    and steering_vector.shape[-1] == hidden_size_expected
+        if random_vectors:
+            # Generate a random unit vector with correct shape/dtype/device
+            rand_vec = torch.randn(hidden_size_expected, device=base_model.device, dtype=(bias_vector.dtype if (isinstance(bias_vector, torch.Tensor)) else torch.float32))
+            rand_vec = rand_vec / (torch.norm(rand_vec) + 1e-12)
+            steer_vec = None if only_bias else rand_vec
+        else:
+            steer_vec = (
+                None if only_bias else (
+                    steering_vector
+                    if (
+                        hasattr(steering_vector, "shape")
+                        and steering_vector.shape[-1] == hidden_size_expected
+                    )
+                    else None
                 )
-                else None
             )
-        )
         # First compute the unsteered base token (save only last-step logits, then move to CPU)
         with torch.inference_mode():
             with base_model.trace(base_output_ids) as tracer:
@@ -787,6 +816,8 @@ def run_example(thinking_model, thinking_tokenizer, base_model, base_tokenizer,
         disagreement_only=(not args.disable_disagreement_only),
         collect_details=True,
         only_bias=bool(args.only_bias),
+        random_firing=bool(args.random_firing),
+        random_vectors=bool(args.random_vectors),
     )
     hybrid_response = f"{cold_start_text}{base_tokenizer.decode(hybrid_output_ids[0][len(base_input_with_cold_start[0]):], skip_special_tokens=True)}"
     print(hybrid_response)
@@ -932,7 +963,7 @@ def append_rolling_result(record: dict, args, base_model_id: str, thinking_model
     os.makedirs(f"{args.results_dir}/rolling", exist_ok=True)
     if base_model_id == "qwen2.5-32b" and thinking_model_id == "deepseek-r1-distill-qwen-32b":
         base_model_id = "qwen2.5-32b-on-deepseek-r1-distill-qwen-32b"
-    suffix = "_bias-only" if getattr(args, "only_bias", False) else ""
+    suffix = _result_suffix(args)
     path = f"{args.results_dir}/rolling/rolling_{base_model_id}_{args.dataset}{suffix}.jsonl"
     with open(path, "a") as f:
         f.write(json.dumps(record) + "\n")
@@ -963,7 +994,7 @@ def save_detailed_results(results, args, thinking_model_id, base_model_id):
     os.makedirs(f"{args.results_dir}/detailed", exist_ok=True)
     if base_model_id == "qwen2.5-32b" and thinking_model_id == "deepseek-r1-distill-qwen-32b":
         base_model_id = "qwen2.5-32b-on-deepseek-r1-distill-qwen-32b"
-    suffix = "_bias-only" if getattr(args, "only_bias", False) else ""
+    suffix = _result_suffix(args)
     filename = f"{args.results_dir}/detailed/hybrid_stats_{base_model_id}_{args.dataset}{suffix}.json"
     avg_steering_stats = {
         "steered_count": sum(stat["steered_count"] for stat in results["steering_stats"]) / len(results["steering_stats"]),
@@ -1146,6 +1177,8 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             disagreement_only=(not args.disable_disagreement_only),
             collect_details=bool(args.store_per_token_details),
             only_bias=bool(args.only_bias),
+            random_firing=bool(args.random_firing),
+            random_vectors=bool(args.random_vectors),
         )
         hybrid_response = f"{cold_start_text}{base_tokenizer.decode(hybrid_output_ids[0][len(base_input_with_cold_start[0]):], skip_special_tokens=True)}"
         del hybrid_output_ids, base_input_with_cold_start, thinking_input_with_cold_start
@@ -1173,9 +1206,14 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
         
         # Evaluate answers
         print("\nEvaluating answers...")
-        thinking_correct, thinking_judge_raw = evaluate_answer(clean_thinking_answer, correct_answer, question, "Thinking Model")
-        base_correct, base_judge_raw = evaluate_answer(clean_base_answer, correct_answer, question, "Base Model")
-        hybrid_correct, hybrid_judge_raw = evaluate_answer(clean_hybrid_answer, correct_answer, question, "Hybrid Model")
+        if _is_ablation(args):
+            thinking_correct, thinking_judge_raw = False, "SKIPPED"
+            base_correct, base_judge_raw = False, "SKIPPED"
+            hybrid_correct, hybrid_judge_raw = evaluate_answer(clean_hybrid_answer, correct_answer, question, "Hybrid Model")
+        else:
+            thinking_correct, thinking_judge_raw = evaluate_answer(clean_thinking_answer, correct_answer, question, "Thinking Model")
+            base_correct, base_judge_raw = evaluate_answer(clean_base_answer, correct_answer, question, "Base Model")
+            hybrid_correct, hybrid_judge_raw = evaluate_answer(clean_hybrid_answer, correct_answer, question, "Hybrid Model")
         
         if thinking_correct:
             results["thinking_correct"] += 1
@@ -1213,15 +1251,16 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
 
         # Print current results
         print(f"\nCurrent Results after {task_counter} tasks:")
-        print(f"Thinking Model: {results['thinking_correct']}/{task_counter} correct ({results['thinking_correct']/task_counter*100:.1f}%)")
-        print(f"Base Model: {results['base_correct']}/{task_counter} correct ({results['base_correct']/task_counter*100:.1f}%)")
+        if not _is_ablation(args):
+            print(f"Thinking Model: {results['thinking_correct']}/{task_counter} correct ({results['thinking_correct']/task_counter*100:.1f}%)")
+            print(f"Base Model: {results['base_correct']}/{task_counter} correct ({results['base_correct']/task_counter*100:.1f}%)")
         print(f"Hybrid Model: {results['hybrid_correct']}/{task_counter} correct ({results['hybrid_correct']/task_counter*100:.1f}%)")
         # Concise gap recovery and EOS summary so far
         so_far = task_counter
-        base_acc_now = results['base_correct'] / so_far * 100
-        thinking_acc_now = results['thinking_correct'] / so_far * 100
+        base_acc_now = results['base_correct'] / so_far * 100 if not _is_ablation(args) else 0.0
+        thinking_acc_now = results['thinking_correct'] / so_far * 100 if not _is_ablation(args) else 0.0
         hybrid_acc_now = results['hybrid_correct'] / so_far * 100
-        gap_now = abs(thinking_acc_now - base_acc_now)
+        gap_now = abs(thinking_acc_now - base_acc_now) if not _is_ablation(args) else 0.0
         if gap_now > 0:
             recovered_now = (hybrid_acc_now - min(base_acc_now, thinking_acc_now)) / gap_now
             print(f"Gap recovered by hybrid: {max(0.0, recovered_now)*100:.1f}% of |Thinking-Base|")
@@ -1251,25 +1290,30 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
     hybrid_accuracy = results["hybrid_correct"] / task_counter * 100
 
     print("\n===== Final Results =====")
-    print(f"Thinking Model: {results['thinking_correct']}/{task_counter} correct ({thinking_accuracy:.1f}%)")
-    print(f"Base Model: {results['base_correct']}/{task_counter} correct ({base_accuracy:.1f}%)")
+    if not _is_ablation(args):
+        print(f"Thinking Model: {results['thinking_correct']}/{task_counter} correct ({thinking_accuracy:.1f}%)")
+        print(f"Base Model: {results['base_correct']}/{task_counter} correct ({base_accuracy:.1f}%)")
     print(f"Hybrid Model: {results['hybrid_correct']}/{task_counter} correct ({hybrid_accuracy:.1f}%)")
     # Concise end-of-run gap and EOS summary
-    gap_final = abs(thinking_accuracy - base_accuracy)
+    gap_final = abs(thinking_accuracy - base_accuracy) if not _is_ablation(args) else 0.0
     if gap_final > 0:
         recovered_final = (hybrid_accuracy - min(base_accuracy, thinking_accuracy)) / gap_final
         print(f"Gap recovered by hybrid: {max(0.0, recovered_final)*100:.1f}% of |Thinking-Base|")
     else:
         print("Gap recovered by hybrid: n/a")
-    base_eos_pct = (sum(results['base_eos']) / task_counter) * 100 if task_counter > 0 else 0.0
-    thinking_eos_pct = (sum(results['thinking_eos']) / task_counter) * 100 if task_counter > 0 else 0.0
+    base_eos_pct = (sum(results['base_eos']) / task_counter) * 100 if (task_counter > 0 and not _is_ablation(args)) else 0.0
+    thinking_eos_pct = (sum(results['thinking_eos']) / task_counter) * 100 if (task_counter > 0 and not _is_ablation(args)) else 0.0
     hybrid_eos_pct = (sum(results['hybrid_eos']) / task_counter) * 100 if task_counter > 0 else 0.0
     print(f"EOS endings (%): base {base_eos_pct:.1f}, thinking {thinking_eos_pct:.1f}, hybrid {hybrid_eos_pct:.1f}")
 
     plt.figure(figsize=(10, 6))
     model_names = ["Base", "Thinking", "Hybrid"]
-    accuracies = [base_accuracy, thinking_accuracy, hybrid_accuracy]
-    colors = ["#3498db", "#e74c3c", "#2ecc71"]
+    if _is_ablation(args):
+        accuracies = [0.0, 0.0, hybrid_accuracy]
+        colors = ["#bdc3c7", "#bdc3c7", "#2ecc71"]
+    else:
+        accuracies = [base_accuracy, thinking_accuracy, hybrid_accuracy]
+        colors = ["#3498db", "#e74c3c", "#2ecc71"]
     plt.bar(model_names, accuracies, color=colors)
     plt.title(f"Model Accuracy on {task_counter} {args.dataset} Tasks")
     plt.ylabel("Accuracy (%)")
@@ -1277,7 +1321,7 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
     for i, accuracy in enumerate(accuracies):
         plt.text(i, accuracy + 2, f"{accuracy:.1f}%", ha='center')
     plt.tight_layout()
-    suffix = "_bias-only" if getattr(args, "only_bias", False) else ""
+    suffix = _result_suffix(args)
     plt.savefig(f"{args.results_dir}/accuracy_{base_model_id}_{args.dataset}{suffix}.png")
     plt.show()
 
@@ -1312,7 +1356,7 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             }
         }
         benchmark_data["tasks"].append(task_data)
-    suffix = "_bias-only" if getattr(args, "only_bias", False) else ""
+    suffix = _result_suffix(args)
     json_path = f"{args.results_dir}/benchmark_results_{base_model_id}_{args.dataset}{suffix}.json"
     with open(json_path, 'w') as f:
         json.dump(benchmark_data, f, indent=2)
@@ -1379,7 +1423,7 @@ if results["no_steering_fractions"]:
                 label=f"Average: {detailed_data['steering_stats']['avg_no_steering']:.2f}")
     plt.legend()
     plt.tight_layout()
-    suffix = "_bias-only" if getattr(args, "only_bias", False) else ""
+    suffix = _result_suffix(args)
     plt.savefig(f"{args.results_dir}/no_steering_distribution_{base_model_id}_{args.dataset}{suffix}.png")
     plt.show()
 
