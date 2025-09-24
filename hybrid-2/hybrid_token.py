@@ -242,7 +242,7 @@ def hybrid_generate_token(
         # 1) THINKING MODEL — derive steering vector from current position
         with torch.inference_mode():
             with thinking_model.trace(thinking_output_ids) as tracer:
-                activation_curr = thinking_model.model.layers[sae_layer].output[0][0, -1, :].save()
+                activation_curr = thinking_model.model.layers[sae_layer].output[0, -1, :].save()
 
         activation_curr = activation_curr.detach().clone()
         latent_acts = sae.encoder(activation_curr.to(torch.float32) - sae.b_dec)
