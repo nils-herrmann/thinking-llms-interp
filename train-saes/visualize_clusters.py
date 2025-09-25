@@ -464,6 +464,8 @@ def visualize_all_models(output_dir="results/figures"):
     
     # Get all model IDs
     model_ids = get_all_model_ids()
+    # Filter out models with "Llama-70B" in title/id
+    model_ids = [m for m in model_ids if "llama-70b" not in m.lower()]
     
     if not model_ids:
         print("No model results found.")
@@ -503,9 +505,14 @@ def visualize_all_models(output_dir="results/figures"):
         N=256
     )
     
-    # Create multi-panel figure with reduced height and shared colorbar
+    # Create multi-panel figure with up to 3 columns and shared colorbar
     n_models = len(model_results)
-    fig = plt.figure(figsize=(12 * n_models, 11))  # Slightly taller
+    if n_models == 0:
+        print("No results loaded for any model.")
+        return
+    n_cols = min(3, n_models)
+    n_rows = int(np.ceil(n_models / n_cols))
+    fig = plt.figure(figsize=(12 * n_cols, 11 * n_rows))
     
     # Set font sizes globally for better readability in a paper
     plt.rcParams.update({
@@ -519,15 +526,34 @@ def visualize_all_models(output_dir="results/figures"):
     })
     
     # Create a GridSpec layout with space for the colorbar
-    gs = fig.add_gridspec(1, n_models + 1, width_ratios=n_models * [1] + [0.05], top=0.88)  # Adjusted top margin
+    gs = fig.add_gridspec(n_rows, n_cols + 1, width_ratios=n_cols * [1] + [0.05], height_ratios=n_rows * [1], top=0.88)
     
-    # Create axes for each model
+    # Create axes for each model in row-major order, centering last row if not full
     axes = []
+    items_in_last_row = n_models - (n_rows - 1) * n_cols
     for i in range(n_models):
-        axes.append(fig.add_subplot(gs[0, i]))
+        row = i // n_cols
+        idx_in_row = i - row * n_cols
+        if row == n_rows - 1 and items_in_last_row < n_cols:
+            # Center for 3-column grids: place 1 in middle, 2 at sides
+            if n_cols == 3:
+                if items_in_last_row == 1:
+                    col = 1
+                elif items_in_last_row == 2:
+                    # Place two items adjacent near the center-left: columns 0 and 1
+                    col = 0 if idx_in_row == 0 else 1
+                else:
+                    col = idx_in_row
+            else:
+                # Generic offset for other n_cols
+                offset = (n_cols - items_in_last_row) // 2
+                col = offset + idx_in_row
+        else:
+            col = idx_in_row
+        axes.append(fig.add_subplot(gs[row, col]))
     
-    # Create a separate axis for the colorbar
-    cbar_ax = fig.add_subplot(gs[0, -1])
+    # Create a separate axis for the colorbar spanning all rows
+    cbar_ax = fig.add_subplot(gs[:, -1])
     
     # Create visualizations for each model
     for j, (model_id, results_df) in enumerate(model_results.items()):
@@ -643,11 +669,8 @@ def visualize_all_models(output_dir="results/figures"):
     cbar.set_label('Normalized Final Score', fontsize=28)
     cbar.ax.tick_params(labelsize=24)
     
-    # Add overall title
-    plt.suptitle("SAE Grid Search Results Comparison", fontsize=36, y=1)  # Reduced y position
-    
     # Adjust layout to reduce white borders on left and right
-    plt.tight_layout(rect=[-0.05, 0, 1.05, 0.90])  
+    plt.tight_layout(rect=[-0.05, 0, 1.05, 0.98])  
     
     # Save figure with reduced padding
     save_path = os.path.join(output_dir, "sae_grid_search_all_models.pdf")
