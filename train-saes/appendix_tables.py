@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
 import json
-import os
 
 def load_json_file(filepath):
     """Load JSON file and return the data."""
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def format_examples(examples, max_examples=10):
@@ -112,6 +111,20 @@ def main():
             'layer': 38,
             'cluster_size': 5,
             'json_file': 'results/vars/sae_topk_results_deepseek-r1-distill-qwen-14b_layer38.json'
+        },
+        {
+            'model_name': 'QwQ-32B',
+            'model_label': 'qwq_32b',
+            'layer': 27,
+            'cluster_size': 10,
+            'json_file': 'results/vars/sae_topk_results_qwq-32b_layer27.json'
+        },
+        {
+            'model_name': 'DeepSeek-R1-Distill-Qwen-32b',
+            'model_label': 'qwen_32b',
+            'layer': 27,
+            'cluster_size': 15,
+            'json_file': 'results/vars/sae_topk_results_deepseek-r1-distill-qwen-32b_layer27.json'
         }
     ]
     
@@ -119,7 +132,7 @@ def main():
     print("\\section{Sparse Autoencoder Features}")
     print("\\label{sec:sae_appendix}")
     print("")
-    print("In this appendix, we provide detailed tables showing the discovered features for each model analyzed in our paper. For each model, we list the category titles and representative examples for the sparse autoencoder features identified during our analysis.")
+    print("In this section, we provide detailed tables showing the discovered features for each model analyzed in our paper. For each model, we list the category titles and representative examples for the sparse autoencoder features identified during our analysis.")
     print("")
     
     # Generate tables for each configuration
