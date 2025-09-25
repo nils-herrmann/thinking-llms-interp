@@ -130,9 +130,9 @@ def main():
     
     # Print header
     print("\\section{Sparse Autoencoder Features}")
-    print("\\label{sec:sae_appendix}")
+    print("\\label{app:sae_appendix}")
     print("")
-    print("In this section, we provide detailed tables showing the discovered features for each model analyzed in our paper. For each model, we list the category titles and representative examples for the sparse autoencoder features identified during our analysis.")
+    print("In this section, we provide detailed tables showing the complete reasoning taxonomies for our best-performing SAE configurations. For transparency and to demonstrate the full scope of our approach, we present all discovered categories rather than a curated subset. For each model, we list all category titles and representative examples for the sparse autoencoder features identified during our analysis.")
     print("")
     
     # Generate tables for each configuration
