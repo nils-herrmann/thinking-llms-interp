@@ -1364,7 +1364,7 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
         cum_base = prev_counts["base"] + results["base_correct"]
         cum_hybrid = prev_counts["hybrid"] + results["hybrid_correct"]
 
-        print(f"\nCurrent Results after {so_far_cum} tasks (including {prev_completed} previous):")
+        print(f"\nCurrent Results after {so_far_cum} tasks:")
         if not _is_ablation(args):
             print(f"Thinking Model: {cum_thinking}/{so_far_cum} correct ({(cum_thinking/so_far_cum)*100:.1f}%)")
             print(f"Base Model: {cum_base}/{so_far_cum} correct ({(cum_base/so_far_cum)*100:.1f}%)")
@@ -1380,33 +1380,23 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
             print(f"Gap recovered by hybrid: {max(0.0, recovered_now)*100:.1f}% of |Thinking-Base|")
         else:
             print("Gap recovered by hybrid: n/a")
-        # EOS percentages: show both this-run and cumulative when previous EOS exist
-        run_den = task_counter
-        hybrid_eos_pct_run = (sum(results['hybrid_eos']) / run_den) * 100 if run_den > 0 else 0.0
+        # EOS percentages: report combined across previous + current only
         if _is_ablation(args):
-            msg = f"EOS endings (% this run): hybrid {hybrid_eos_pct_run:.1f}"
-            if prev_completed > 0:
-                cum_den = prev_eos_known.get('hybrid', 0) + task_counter
-                cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
-                cum_pct = (cum_hybrid_eos / cum_den) * 100 if cum_den > 0 else 0.0
-                msg += f" | cumulative {cum_pct:.1f}"
-            print(msg)
+            cum_den = prev_eos_known.get('hybrid', 0) + task_counter
+            cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
+            cum_pct = (cum_hybrid_eos / cum_den) * 100 if cum_den > 0 else 0.0
+            print(f"EOS endings (% across all {so_far_cum} tasks): hybrid {cum_pct:.1f}")
         else:
-            base_eos_pct_run = (sum(results['base_eos']) / run_den) * 100 if run_den > 0 else 0.0
-            thinking_eos_pct_run = (sum(results['thinking_eos']) / run_den) * 100 if run_den > 0 else 0.0
-            msg = f"EOS endings (% this run): base {base_eos_pct_run:.1f}, thinking {thinking_eos_pct_run:.1f}, hybrid {hybrid_eos_pct_run:.1f}"
-            if prev_completed > 0:
-                cum_den_base = prev_eos_known.get('base', 0) + task_counter
-                cum_den_thinking = prev_eos_known.get('thinking', 0) + task_counter
-                cum_den_hybrid = prev_eos_known.get('hybrid', 0) + task_counter
-                cum_base_eos = prev_eos_counts.get('base', 0) + sum(results['base_eos'])
-                cum_thinking_eos = prev_eos_counts.get('thinking', 0) + sum(results['thinking_eos'])
-                cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
-                cum_base_pct = (cum_base_eos / cum_den_base) * 100 if cum_den_base > 0 else 0.0
-                cum_thinking_pct = (cum_thinking_eos / cum_den_thinking) * 100 if cum_den_thinking > 0 else 0.0
-                cum_hybrid_pct = (cum_hybrid_eos / cum_den_hybrid) * 100 if cum_den_hybrid > 0 else 0.0
-                msg += f" | cumulative base {cum_base_pct:.1f}, thinking {cum_thinking_pct:.1f}, hybrid {cum_hybrid_pct:.1f}"
-            print(msg)
+            cum_den_base = prev_eos_known.get('base', 0) + task_counter
+            cum_den_thinking = prev_eos_known.get('thinking', 0) + task_counter
+            cum_den_hybrid = prev_eos_known.get('hybrid', 0) + task_counter
+            cum_base_eos = prev_eos_counts.get('base', 0) + sum(results['base_eos'])
+            cum_thinking_eos = prev_eos_counts.get('thinking', 0) + sum(results['thinking_eos'])
+            cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
+            cum_base_pct = (cum_base_eos / cum_den_base) * 100 if cum_den_base > 0 else 0.0
+            cum_thinking_pct = (cum_thinking_eos / cum_den_thinking) * 100 if cum_den_thinking > 0 else 0.0
+            cum_hybrid_pct = (cum_hybrid_eos / cum_den_hybrid) * 100 if cum_den_hybrid > 0 else 0.0
+            print(f"EOS endings (% across all {so_far_cum} tasks): base {cum_base_pct:.1f}, thinking {cum_thinking_pct:.1f}, hybrid {cum_hybrid_pct:.1f}")
         
         # Clean up to prevent memory leaks
         del thinking_input_ids, base_input_ids, thinking_outputs
@@ -1438,10 +1428,23 @@ def run_evaluation(thinking_model, thinking_tokenizer, base_model, base_tokenize
         print(f"Gap recovered by hybrid: {max(0.0, recovered_final)*100:.1f}% of |Thinking-Base|")
     else:
         print("Gap recovered by hybrid: n/a")
-    base_eos_pct = (sum(results['base_eos']) / task_counter) * 100 if (task_counter > 0 and not _is_ablation(args)) else 0.0
-    thinking_eos_pct = (sum(results['thinking_eos']) / task_counter) * 100 if (task_counter > 0 and not _is_ablation(args)) else 0.0
-    hybrid_eos_pct = (sum(results['hybrid_eos']) / task_counter) * 100 if task_counter > 0 else 0.0
-    print(f"EOS endings (%): base {base_eos_pct:.1f}, thinking {thinking_eos_pct:.1f}, hybrid {hybrid_eos_pct:.1f}")
+    # EOS endings combined across previous + this run
+    if _is_ablation(args):
+        cum_den_hybrid = prev_eos_known.get('hybrid', 0) + task_counter
+        cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
+        cum_hybrid_pct = (cum_hybrid_eos / cum_den_hybrid) * 100 if cum_den_hybrid > 0 else 0.0
+        print(f"EOS endings (% across all {prev_completed + task_counter} tasks): hybrid {cum_hybrid_pct:.1f}")
+    else:
+        cum_den_base = prev_eos_known.get('base', 0) + task_counter
+        cum_den_thinking = prev_eos_known.get('thinking', 0) + task_counter
+        cum_den_hybrid = prev_eos_known.get('hybrid', 0) + task_counter
+        cum_base_eos = prev_eos_counts.get('base', 0) + sum(results['base_eos'])
+        cum_thinking_eos = prev_eos_counts.get('thinking', 0) + sum(results['thinking_eos'])
+        cum_hybrid_eos = prev_eos_counts.get('hybrid', 0) + sum(results['hybrid_eos'])
+        cum_base_pct = (cum_base_eos / cum_den_base) * 100 if cum_den_base > 0 else 0.0
+        cum_thinking_pct = (cum_thinking_eos / cum_den_thinking) * 100 if cum_den_thinking > 0 else 0.0
+        cum_hybrid_pct = (cum_hybrid_eos / cum_den_hybrid) * 100 if cum_den_hybrid > 0 else 0.0
+        print(f"EOS endings (% across all {prev_completed + task_counter} tasks): base {cum_base_pct:.1f}, thinking {cum_thinking_pct:.1f}, hybrid {cum_hybrid_pct:.1f}")
 
     plt.figure(figsize=(10, 6))
     model_names = ["Base", "Thinking", "Hybrid"]
