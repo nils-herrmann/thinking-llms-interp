@@ -992,61 +992,172 @@ Just answer YES if the model's answer is correct, or NO if it's incorrect. Nothi
     print(f"{model_name} evaluated locally as: {response}")
     return local_ok, response
 
-def _rolling_path(args, base_model_id: str, thinking_model_id: str) -> str:
-    """Build rolling results path for this run configuration."""
+ROLLING_MAX_BYTES = 90 * 1024 * 1024  # 100 MB hard cap per rolling part file
+
+def _rolling_prefix(args, base_model_id: str, thinking_model_id: str) -> str:
+    """Return the base prefix (without .jsonl or part suffix) for rolling outputs.
+
+    Splitting/part management is performed by helper functions below, keeping callers agnostic.
+    """
     os.makedirs(f"{args.results_dir}/rolling", exist_ok=True)
     if base_model_id == "qwen2.5-32b" and thinking_model_id == "deepseek-r1-distill-qwen-32b":
         base_model_id = "qwen2.5-32b-on-deepseek-r1-distill-qwen-32b"
     suffix = _result_suffix(args)
-    return f"{args.results_dir}/rolling/rolling_{base_model_id}_{args.dataset}{suffix}.jsonl"
+    return f"{args.results_dir}/rolling/rolling_{base_model_id}_{args.dataset}{suffix}"
 
+def _list_rolling_files(prefix: str):
+    """Return (legacy_file, part_files_sorted) for a given prefix.
+
+    - legacy_file: prefix + ".jsonl" if it exists, else None
+    - part_files_sorted: list of files matching prefix_#.jsonl sorted by # ascending
+    """
+    directory = os.path.dirname(prefix)
+    base = os.path.basename(prefix)
+    legacy = os.path.join(directory, base + ".jsonl")
+    legacy_file = legacy if os.path.exists(legacy) else None
+    part_files = []
+    try:
+        for fname in os.listdir(directory):
+            if not fname.startswith(base + "_") or not fname.endswith(".jsonl"):
+                continue
+            m = re.match(rf"^{re.escape(base)}_(\\d+)\\.jsonl$", fname)
+            if not m:
+                continue
+            idx = int(m.group(1))
+            part_files.append((idx, os.path.join(directory, fname)))
+    except FileNotFoundError:
+        part_files = []
+    part_files_sorted = [p for _, p in sorted(part_files, key=lambda x: x[0])]
+    return legacy_file, part_files_sorted
+
+def _next_part_path(prefix: str, existing_parts: list) -> str:
+    """Return a new part path with next monotonically increasing index."""
+    if not existing_parts:
+        next_idx = 0
+    else:
+        # existing_parts are full paths; extract max index
+        directory = os.path.dirname(prefix)
+        base = os.path.basename(prefix)
+        max_idx = -1
+        for p in existing_parts:
+            fname = os.path.basename(p)
+            m = re.match(rf"^{re.escape(base)}_(\\d+)\\.jsonl$", fname)
+            if m:
+                max_idx = max(max_idx, int(m.group(1)))
+        next_idx = max_idx + 1
+    return f"{prefix}_{next_idx}.jsonl"
 
 def _count_completed_tasks(args, base_model_id: str, thinking_model_id: str) -> int:
-    """Return number of already completed tasks by counting lines in rolling JSONL."""
-    path = _rolling_path(args, base_model_id, thinking_model_id)
-    if not os.path.exists(path):
-        return 0
-    with open(path, "r") as f:
-        return sum(1 for _ in f)
+    """Return number of already completed tasks by counting lines across rolling JSONL parts."""
+    prefix = _rolling_prefix(args, base_model_id, thinking_model_id)
+    legacy_file, parts = _list_rolling_files(prefix)
+    # Disallow mixing legacy and part files simultaneously
+    assert not (legacy_file is not None and len(parts) > 0), (
+        f"Mixed rolling files detected for prefix {prefix}: both legacy and part files present"
+    )
+    total = 0
+    files = ([] if legacy_file is None else [legacy_file]) + parts
+    for path in files:
+        try:
+            with open(path, "r") as f:
+                for _ in f:
+                    total += 1
+        except FileNotFoundError:
+            continue
+    return total
 
 
 def append_rolling_result(record: dict, args, base_model_id: str, thinking_model_id: str):
-    path = _rolling_path(args, base_model_id, thinking_model_id)
-    with open(path, "a") as f:
-        f.write(json.dumps(record) + "\n")
+    """Append a record to the current rolling file, splitting into parts to enforce 100MB cap."""
+    assert isinstance(record, dict)
+    prefix = _rolling_prefix(args, base_model_id, thinking_model_id)
+    legacy_file, parts = _list_rolling_files(prefix)
+    # Disallow mixing legacy and parts
+    assert not (legacy_file is not None and len(parts) > 0), (
+        f"Mixed rolling files detected for prefix {prefix}: both legacy and part files present"
+    )
+
+    serialized = json.dumps(record)
+    line_bytes = len((serialized + "\n").encode("utf-8"))
+
+    # Choose target file with preference: latest part; else legacy; else create legacy first
+    if parts:
+        target_path = parts[-1]
+        current_size = os.path.getsize(target_path) if os.path.exists(target_path) else 0
+        if current_size + line_bytes > ROLLING_MAX_BYTES:
+            target_path = _next_part_path(prefix, parts)
+        with open(target_path, "a", encoding="utf-8") as f:
+            f.write(serialized + "\n")
+        return
+
+    # No parts exist
+    if legacy_file is None:
+        # Start with a single legacy file (no _0 suffix)
+        legacy_file = prefix + ".jsonl"
+        # It will remain single-file unless/ until it exceeds the cap during a future append
+        with open(legacy_file, "a", encoding="utf-8") as f:
+            f.write(serialized + "\n")
+        return
+
+    # We only have a legacy file
+    current_size = os.path.getsize(legacy_file) if os.path.exists(legacy_file) else 0
+    if current_size + line_bytes <= ROLLING_MAX_BYTES:
+        with open(legacy_file, "a", encoding="utf-8") as f:
+            f.write(serialized + "\n")
+        return
+
+    # Exceeding cap: migrate legacy to parts to avoid mixing
+    # Move legacy -> _0.jsonl, then write to _1.jsonl (or next as needed)
+    existing_parts = []
+    part0 = _next_part_path(prefix, existing_parts)
+    os.rename(legacy_file, part0)
+    part1 = _next_part_path(prefix, [part0])
+    with open(part1, "a", encoding="utf-8") as f:
+        f.write(serialized + "\n")
 
 
 def _load_prev_counts(args, base_model_id: str, thinking_model_id: str):
-    """Load existing rolling results and return (n_completed, correct_counts, eos_true_counts, eos_known_counts).
+    """Load existing rolling results across all parts and return
+    (n_completed, correct_counts, eos_true_counts, eos_known_counts).
 
     For EOS, only count entries that explicitly recorded EOS for each model into the known denominator.
     """
-    path = _rolling_path(args, base_model_id, thinking_model_id)
-    if not os.path.exists(path):
+    prefix = _rolling_prefix(args, base_model_id, thinking_model_id)
+    legacy_file, parts = _list_rolling_files(prefix)
+    # Disallow mixing legacy and part files simultaneously
+    assert not (legacy_file is not None and len(parts) > 0), (
+        f"Mixed rolling files detected for prefix {prefix}: both legacy and part files present"
+    )
+    files = ([] if legacy_file is None else [legacy_file]) + parts
+    if not files:
         return 0, {"thinking": 0, "base": 0, "hybrid": 0}, {"thinking": 0, "base": 0, "hybrid": 0}, {"thinking": 0, "base": 0, "hybrid": 0}
     n = 0
     counts = {"thinking": 0, "base": 0, "hybrid": 0}
     eos_counts = {"thinking": 0, "base": 0, "hybrid": 0}
     eos_known = {"thinking": 0, "base": 0, "hybrid": 0}
-    with open(path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            rec = json.loads(line)
-            judges = rec["judges"]
-            for k in ("thinking", "base", "hybrid"):
-                c = judges[k]["correct"]
-                assert isinstance(c, bool)
-                if c:
-                    counts[k] += 1
-            eos = rec.get("eos", {})
-            for k in ("thinking", "base", "hybrid"):
-                if k in eos:
-                    eos_known[k] += 1
-                    if bool(eos.get(k, False)):
-                        eos_counts[k] += 1
-            n += 1
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    rec = json.loads(line)
+                    judges = rec["judges"]
+                    for k in ("thinking", "base", "hybrid"):
+                        c = judges[k]["correct"]
+                        assert isinstance(c, bool)
+                        if c:
+                            counts[k] += 1
+                    eos = rec.get("eos", {})
+                    for k in ("thinking", "base", "hybrid"):
+                        if k in eos:
+                            eos_known[k] += 1
+                            if bool(eos.get(k, False)):
+                                eos_counts[k] += 1
+                    n += 1
+        except FileNotFoundError:
+            continue
     return n, counts, eos_counts, eos_known
 
 def analyze_hybrid_stats(token_latent_info, steering_selection):
