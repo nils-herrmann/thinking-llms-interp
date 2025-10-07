@@ -1,0 +1,125 @@
+{
+  "file": "rolling_qwen2.5-14b_math500.jsonl",
+  "source_files": [
+    "rolling_qwen2.5-14b_math500.jsonl",
+    "rolling_qwen2.5-14b_math500_0.jsonl"
+  ],
+  "num_problems": 342,
+  "total_tokens": 455980,
+  "total_steered_tokens": 28012,
+  "avg_steered_tokens_per_problem": 81.90643274853801,
+  "avg_tokens_per_problem": 1333.2748538011697,
+  "avg_steered_fraction": 0.061432518970130266,
+  "avg_steered_fraction_per_problem": 0.08463370525633458,
+  "records_missing_per_token": 0,
+  "most_used_latent_title": "Problem Restatement",
+  "most_used_latent_key": "idx2",
+  "top_latent_titles": [
+    [
+      "Problem Restatement",
+      17163
+    ],
+    [
+      "Metacognitive Markers",
+      9815
+    ],
+    [
+      "Numeric Computation",
+      1026
+    ],
+    [
+      "Recall of Domain Knowledge",
+      7
+    ],
+    [
+      "Conditional Reasoning",
+      1
+    ]
+  ],
+  "top_latent_keys": [
+    [
+      "idx2",
+      17163
+    ],
+    [
+      "idx3",
+      9815
+    ],
+    [
+      "idx0",
+      1026
+    ],
+    [
+      "idx4",
+      7
+    ],
+    [
+      "idx1",
+      1
+    ]
+  ],
+  "top_coefficients": [
+    [
+      0.1,
+      9285
+    ],
+    [
+      0.5,
+      8726
+    ],
+    [
+      0.8,
+      1541
+    ],
+    [
+      0.9,
+      1501
+    ],
+    [
+      0.7,
+      1468
+    ],
+    [
+      1.0,
+      1388
+    ],
+    [
+      0.6,
+      1349
+    ],
+    [
+      0.3,
+      1025
+    ],
+    [
+      0.2,
+      959
+    ],
+    [
+      0.4,
+      770
+    ]
+  ],
+  "top_windows": [
+    [
+      0,
+      23756
+    ],
+    [
+      -15,
+      1550
+    ],
+    [
+      -1,
+      1089
+    ],
+    [
+      -50,
+      938
+    ],
+    [
+      -100,
+      679
+    ]
+  ]
+}
