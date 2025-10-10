@@ -1,6 +1,6 @@
 # Base Models Know How to Reason, Thinking Models Learn When
 
-Code for the paper [Base Models Know How to Reason, Thinking Models Learn When](https://openreview.net/forum?id=12Tc0R0I8j).
+Code for the paper [Base Models Know How to Reason, Thinking Models Learn When](https://arxiv.org/abs/2510.07364).
 
 **Website:** [thinking-llms-interp.com](https://thinking-llms-interp.com/)
 
@@ -97,10 +97,13 @@ cd hybrid-2
 If you find this work useful, please cite:
 
 ```bibtex
-@inproceedings{venhoff2025thinking,
-  title={Base Models Know How to Reason, Thinking Models Learn When},
-  author={Venhoff, Constantin and Arcuschin, Iv{\'a}n and Torr, Philip and Conmy, Arthur and Nanda, Neel},
-  booktitle={Mechanistic Interpretability Workshop at NeurIPS},
-  year={2025}
+@misc{venhoff2025basemodelsknowreason,
+      title={Base Models Know How to Reason, Thinking Models Learn When},
+      author={Constantin Venhoff and Iván Arcuschin and Philip Torr and Arthur Conmy and Neel Nanda},
+      year={2025},
+      eprint={2510.07364},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2510.07364},
 }
 ```
