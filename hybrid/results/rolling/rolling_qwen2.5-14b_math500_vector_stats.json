@@ -4,32 +4,32 @@
     "rolling_qwen2.5-14b_math500.jsonl",
     "rolling_qwen2.5-14b_math500_0.jsonl"
   ],
-  "num_problems": 342,
-  "total_tokens": 455980,
-  "total_steered_tokens": 28012,
-  "avg_steered_tokens_per_problem": 81.90643274853801,
-  "avg_tokens_per_problem": 1333.2748538011697,
-  "avg_steered_fraction": 0.061432518970130266,
-  "avg_steered_fraction_per_problem": 0.08463370525633458,
+  "num_problems": 500,
+  "total_tokens": 722790,
+  "total_steered_tokens": 42664,
+  "avg_steered_tokens_per_problem": 85.328,
+  "avg_tokens_per_problem": 1445.58,
+  "avg_steered_fraction": 0.05902682660247098,
+  "avg_steered_fraction_per_problem": 0.077910982012755,
   "records_missing_per_token": 0,
   "most_used_latent_title": "Problem Restatement",
   "most_used_latent_key": "idx2",
   "top_latent_titles": [
     [
       "Problem Restatement",
-      17163
+      25885
     ],
     [
       "Metacognitive Markers",
-      9815
+      15157
     ],
     [
       "Numeric Computation",
-      1026
+      1611
     ],
     [
       "Recall of Domain Knowledge",
-      7
+      10
     ],
     [
       "Conditional Reasoning",
@@ -39,19 +39,19 @@
   "top_latent_keys": [
     [
       "idx2",
-      17163
+      25885
     ],
     [
       "idx3",
-      9815
+      15157
     ],
     [
       "idx0",
-      1026
+      1611
     ],
     [
       "idx4",
-      7
+      10
     ],
     [
       "idx1",
@@ -61,65 +61,65 @@
   "top_coefficients": [
     [
       0.1,
-      9285
+      16842
     ],
     [
       0.5,
-      8726
-    ],
-    [
-      0.8,
-      1541
+      9439
     ],
     [
       0.9,
-      1501
+      2492
+    ],
+    [
+      0.8,
+      2435
     ],
     [
       0.7,
-      1468
+      2227
     ],
     [
       1.0,
-      1388
+      2173
     ],
     [
       0.6,
-      1349
+      2035
     ],
     [
       0.3,
-      1025
+      1763
     ],
     [
       0.2,
-      959
+      1713
     ],
     [
       0.4,
-      770
+      1545
     ]
   ],
   "top_windows": [
     [
       0,
-      23756
+      34828
     ],
     [
       -15,
-      1550
+      2845
     ],
     [
       -1,
-      1089
+      2001
     ],
     [
       -50,
-      938
+      1737
     ],
     [
       -100,
-      679
+      1253
     ]
   ]
 }
